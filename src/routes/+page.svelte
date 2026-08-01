@@ -10,6 +10,7 @@
     formatDate,
     formatDistance,
     formatNumber,
+    fetchPhysicalProfile,
     getApproach,
     getDiameterKm,
     getRisk,
@@ -28,6 +29,42 @@
     { id: "plasma", name: "PLASMA PINK", color: "#ff62d2", surface: "#8137b7" }
   ];
 
+  const earthPatterns = [
+    { id: "continents", name: "PIXEL CONTINENTS", detail: "broken land plates" },
+    { id: "archipelago", name: "ARCHIPELAGO", detail: "island clusters" },
+    { id: "gridworld", name: "GRIDWORLD", detail: "mapped terrain" },
+    { id: "rings", name: "RINGED TERRA", detail: "retro latitude bands" }
+  ];
+
+  const tagLegend = [
+    {
+      label: "CLOSE",
+      tone: "warn",
+      title: "Near-pass marker",
+      copy: "NEO Finder uses this marker when the recorded miss distance is under 0.05 AU, roughly 7.5 million km. It is not an impact probability."
+    },
+    {
+      label: "TRACKED",
+      tone: "safe",
+      title: "Catalogued object",
+      copy: "The object has a recorded close approach in the NASA feed. Tracked does not mean dangerous; it means astronomers have a useful orbit record."
+    },
+    {
+      label: "PHA",
+      tone: "danger",
+      title: "NASA PHA flag",
+      copy: "Potentially Hazardous Asteroid is a size-and-orbit classification. It does not mean an impact is predicted or expected."
+    }
+  ];
+
+  const educationalFacts = [
+    "A NEO is defined by an orbit that can bring it within 1.3 AU of the Sun. Most NEOs are asteroids.",
+    "A close approach is a geometry event: distance and time, not a promise that an object will hit Earth.",
+    "CNEOS refines orbits using observations reported by telescopes and the Minor Planet Center.",
+    "The real feed gives us size estimates, velocity and miss distance. This scene compresses those values for play.",
+    "JPL's Small-Body Database can add physical clues such as albedo, spectral class and rotation period."
+  ];
+
   let view = "intro";
   let lastView = "dashboard";
   let dateDraft = "";
@@ -42,9 +79,16 @@
   let tokenDraft = "";
   let earthName = "TERRA-01";
   let earthTheme = "aqua";
+  let earthPattern = "continents";
+  let landColor = "#68df9f";
+  let fluidColor = "#0c89c7";
+  let atmosphereColor = "#61e7ff";
+  let atmosphereEnabled = true;
   let notice = "";
   let hydrated = false;
   let noticeTimer;
+  let factIndex = 0;
+  let addingId = "";
 
   $: savedIds = new Set(savedNeos.map((neo) => neo.id));
   $: riskCount = savedNeos.filter((neo) => getRisk(neo).tone === "danger").length;
@@ -55,6 +99,11 @@
     const storedFavourites = loadLocalJson(FAVOURITES_STORAGE_KEY, []);
     earthName = profile?.earthName || "TERRA-01";
     earthTheme = profile?.earthTheme || "aqua";
+    earthPattern = profile?.earthPattern || "continents";
+    landColor = profile?.landColor || "#68df9f";
+    fluidColor = profile?.fluidColor || "#0c89c7";
+    atmosphereColor = profile?.atmosphereColor || "#61e7ff";
+    atmosphereEnabled = profile?.atmosphereEnabled ?? true;
     savedNeos = Array.isArray(storedFavourites) ? storedFavourites : [];
     token = getStoredNasaToken();
     tokenDraft = token;
@@ -63,7 +112,15 @@
 
   function persistProfile() {
     if (!hydrated) return;
-    saveLocalJson(PROFILE_STORAGE_KEY, { earthName, earthTheme });
+    saveLocalJson(PROFILE_STORAGE_KEY, {
+      earthName,
+      earthTheme,
+      earthPattern,
+      landColor,
+      fluidColor,
+      atmosphereColor,
+      atmosphereEnabled
+    });
   }
 
   function persistFavourites() {
@@ -155,6 +212,15 @@
     view = "catalogue";
   }
 
+  function openAbout() {
+    lastView = view;
+    view = "about";
+  }
+
+  function nextFact() {
+    factIndex = (factIndex + 1) % educationalFacts.length;
+  }
+
   function openDetail(neo) {
     selectedNeo = neo;
     lastView = view;
@@ -166,12 +232,28 @@
     selectedNeo = null;
   }
 
-  function addNeo(neo) {
-    if (!savedIds.has(neo.id)) {
-      savedNeos = [...savedNeos, neo];
-      persistFavourites();
-      showNotice(neo.name + " added to your orbit.");
+  async function addNeo(neo) {
+    if (savedIds.has(neo.id)) {
+      view = "dashboard";
+      selectedNeo = null;
+      return;
     }
+
+    addingId = neo.id;
+    let enrichedNeo = neo;
+    try {
+      const physical = await fetchPhysicalProfile(neo);
+      if (physical) enrichedNeo = { ...neo, physical };
+    } catch (error) {
+      console.warn("JPL physical profile unavailable", error);
+    }
+
+    if (!savedIds.has(enrichedNeo.id)) {
+      savedNeos = [...savedNeos, enrichedNeo];
+      persistFavourites();
+      showNotice(enrichedNeo.name + " added to your orbit.");
+    }
+    addingId = "";
     view = "dashboard";
     selectedNeo = null;
   }
@@ -193,6 +275,11 @@
 
   function updateEarthTheme(theme) {
     earthTheme = theme;
+    persistProfile();
+  }
+
+  function updateEarthPattern(pattern) {
+    earthPattern = pattern;
     persistProfile();
   }
 
@@ -310,6 +397,7 @@
         <button class:active={view === "dashboard"} on:click={() => (view = "dashboard")}>DASHBOARD</button>
         <button class:active={view === "catalogue"} on:click={openCatalogue}>CATALOGUE <span>{neoList.length}</span></button>
         <button class:active={view === "settings"} on:click={openSettings}>CUSTOMISE</button>
+        <button class:active={view === "about"} on:click={openAbout}>ABOUT <span>i</span></button>
       </nav>
     </header>
 
@@ -333,6 +421,15 @@
           </div>
         </section>
 
+        <section class="fact-strip" aria-live="polite">
+          <div class="fact-icon">i</div>
+          <div class="fact-copy">
+            <span>ORBITAL FACT // {(factIndex + 1).toString().padStart(2, "0")}</span>
+            <p>{educationalFacts[factIndex]}</p>
+          </div>
+          <button class="text-link-button" on:click={nextFact}>NEXT FACT →</button>
+        </section>
+
         <section class="dashboard-grid">
           <div class="scene-panel">
             <div class="panel-header">
@@ -340,7 +437,15 @@
               <span class:demo-signal={sourceIsDemo} class="signal"><i></i>{sourceLabel}</span>
             </div>
             <div class="scene-frame">
-              <SpaceScene neos={savedNeos} earthTheme={earthTheme} />
+              <SpaceScene
+                neos={savedNeos}
+                earthTheme={earthTheme}
+                earthPattern={earthPattern}
+                landColor={landColor}
+                fluidColor={fluidColor}
+                atmosphereColor={atmosphereColor}
+                atmosphereEnabled={atmosphereEnabled}
+              />
               <div class="scene-caption">
                 <span>EARTH // {earthName}</span>
                 <span>{savedNeos.length} OBJECT{savedNeos.length === 1 ? "" : "S"} IN ORBIT</span>
@@ -377,8 +482,9 @@
               {/if}
             </div>
             <div class="tip-panel">
-              <span class="tip-label">FIELD NOTE</span>
+              <div class="tip-heading"><span class="tip-label">FIELD NOTE</span><button class="info-button" aria-label="Open how it works" on:click={openAbout}>?</button></div>
               <p>Orbital speed is rendered relative to each object's real km/s velocity. Scale is compressed for a readable personal sky.</p>
+              <button class="text-link-button" on:click={openAbout}>HOW NASA TRACKS →</button>
             </div>
           </aside>
         </section>
@@ -405,6 +511,21 @@
           <div class="inline-alert"><span>!</span>{errorMessage}</div>
         {/if}
 
+        <section class="legend-panel" aria-labelledby="legend-title">
+          <div class="legend-heading">
+            <div><span class="tip-label" id="legend-title">TAG LEGEND</span><button class="info-button" aria-label="Open the full NEO Finder guide" on:click={openAbout}>?</button></div>
+            <span class="legend-note">NEO FINDER READOUT // NOT AN IMPACT PREDICTION</span>
+          </div>
+          <div class="legend-grid">
+            {#each tagLegend as tag}
+              <div class="legend-item">
+                <span class={"risk-tag " + tag.tone}>{tag.label}</span>
+                <div><strong>{tag.title}</strong><p>{tag.copy}</p></div>
+              </div>
+            {/each}
+          </div>
+        </section>
+
         {#if loading}
           <div class="catalogue-grid">
             {#each Array(6) as _, index}
@@ -428,8 +549,8 @@
                 </button>
                 <div class="neo-card-footer">
                   <span>{savedIds.has(neo.id) ? "IN YOUR ORBIT" : getRisk(neo).detail.toUpperCase()}</span>
-                  <button class="add-button" class:added={savedIds.has(neo.id)} disabled={savedIds.has(neo.id)} on:click={() => addNeo(neo)}>
-                    {savedIds.has(neo.id) ? "ADDED" : "ADD +"}
+                  <button class="add-button" class:added={savedIds.has(neo.id)} disabled={savedIds.has(neo.id) || addingId === neo.id} on:click={() => addNeo(neo)}>
+                    {addingId === neo.id ? "SCANNING" : savedIds.has(neo.id) ? "ADDED" : "ADD +"}
                   </button>
                 </div>
               </article>
@@ -444,7 +565,17 @@
           <section class="detail-grid">
             <div class="detail-scene panel">
               <div class="panel-header"><span>OBJECT PREVIEW</span><span class="signal"><i></i>{getRisk(selectedNeo).detail.toUpperCase()}</span></div>
-              <div class="detail-scene-frame"><SpaceScene neos={[selectedNeo]} earthTheme={earthTheme} /></div>
+              <div class="detail-scene-frame">
+                <SpaceScene
+                  neos={[selectedNeo]}
+                  earthTheme={earthTheme}
+                  earthPattern={earthPattern}
+                  landColor={landColor}
+                  fluidColor={fluidColor}
+                  atmosphereColor={atmosphereColor}
+                  atmosphereEnabled={atmosphereEnabled}
+                />
+              </div>
             </div>
             <div class="detail-copy">
               <div class="eyebrow">NASA / JPL SMALL BODY RECORD</div>
@@ -457,9 +588,25 @@
                 <div><span>MISS DISTANCE</span><strong>{formatDistance(selectedNeo)}</strong></div>
                 <div><span>INCLINATION</span><strong>{formatNumber(Number(selectedNeo.orbital_data?.inclination), 1)} <small>°</small></strong></div>
               </div>
+              <div class="appearance-note">
+                <div>
+                  <span>APPEARANCE PROFILE</span>
+                  <strong>{selectedNeo.physical?.spectralClass || "PROCEDURAL ROCK"}</strong>
+                </div>
+                <p>
+                  {#if selectedNeo.physical}
+                    JPL physical data is guiding the material and spin.
+                    {#if selectedNeo.physical.rotationPeriodHours}
+                      Rotation period: {formatNumber(selectedNeo.physical.rotationPeriodHours, 1)} hours.
+                    {/if}
+                  {:else}
+                    No published mesh shape is included in the close-approach feed, so a stable procedural profile keeps this object unique.
+                  {/if}
+                </p>
+              </div>
               <div class="detail-actions">
-                <button class="arcade-button" on:click={() => addNeo(selectedNeo)} disabled={savedIds.has(selectedNeo.id)}>
-                  {savedIds.has(selectedNeo.id) ? "ALREADY IN ORBIT" : "ADD TO DASHBOARD"} <span>→</span>
+                <button class="arcade-button" on:click={() => addNeo(selectedNeo)} disabled={savedIds.has(selectedNeo.id) || addingId === selectedNeo.id}>
+                  {addingId === selectedNeo.id ? "READING JPL PROFILE" : savedIds.has(selectedNeo.id) ? "ALREADY IN ORBIT" : "ADD TO DASHBOARD"} <span>→</span>
                 </button>
                 <a class="ghost-button link-button" href={selectedNeo.nasa_jpl_url} target="_blank" rel="noreferrer">OPEN NASA RECORD ↗</a>
               </div>
@@ -467,6 +614,85 @@
             </div>
           </section>
         {/if}
+      </main>
+    {:else if view === "about"}
+      <main class="page-content about-view">
+        <button class="back-button" on:click={() => (view = lastView || "dashboard")}>← BACK TO {lastView === "catalogue" ? "CATALOGUE" : "DASHBOARD"}</button>
+        <section class="page-heading about-hero">
+          <div>
+            <div class="eyebrow">FIELD GUIDE // NASA + JPL</div>
+            <h1>How to read your sky.</h1>
+            <p class="page-lede">
+              NEO Finder turns a real close-approach data set into a small, explorable planetarium.
+              These notes explain what the labels mean, where the numbers come from and why the objects matter.
+            </p>
+          </div>
+          <div class="about-orbit-badge" aria-hidden="true"><span>NEO</span><small>LEARN // TRACK // PLAY</small></div>
+        </section>
+
+        <section class="about-grid">
+          <article class="about-card">
+            <div class="about-index">01 // THE OBJECTS</div>
+            <h2>What is a NEO?</h2>
+            <p>
+              A near-Earth object is an asteroid or comet whose orbit can bring it within 1.3 astronomical units
+              of the Sun. Most known NEOs are asteroids. “Near” describes orbital geometry, not a prediction of impact.
+            </p>
+            <a href="https://cneos.jpl.nasa.gov/glossary/NEO.html" target="_blank" rel="noreferrer">READ CNEOS GLOSSARY ↗</a>
+          </article>
+          <article class="about-card">
+            <div class="about-index">02 // THE LABELS</div>
+            <h2>Decode the tags.</h2>
+            <div class="about-tag-list">
+              {#each tagLegend as tag}
+                <div class="about-tag-row">
+                  <span class={"risk-tag " + tag.tone}>{tag.label}</span>
+                  <p><strong>{tag.title}.</strong> {tag.copy}</p>
+                </div>
+              {/each}
+            </div>
+            <a href="https://cneos.jpl.nasa.gov/about/neo_groups.html" target="_blank" rel="noreferrer">SEE NASA GROUP DEFINITIONS ↗</a>
+          </article>
+          <article class="about-card">
+            <div class="about-index">03 // THE DATA</div>
+            <h2>Numbers with a paper trail.</h2>
+            <p>
+              The catalogue starts with NASA’s NeoWs feed: approach date, miss distance, estimated diameter and
+              relative velocity. When you add an object, NEO Finder can also ask JPL’s Small-Body Database for
+              physical clues such as albedo, spectral class and rotation period.
+            </p>
+            <a href="https://ssd-api.jpl.nasa.gov/doc/sbdb.html" target="_blank" rel="noreferrer">OPEN JPL SBDB DOCS ↗</a>
+          </article>
+          <article class="about-card">
+            <div class="about-index">04 // WHY IT MATTERS</div>
+            <h2>Planetary defence, made legible.</h2>
+            <p>
+              Astronomers use repeated observations to improve an object’s orbit and estimate how it moves through
+              space. Learning the vocabulary helps separate a measured close pass from a sensational headline:
+              a PHA flag is a screening category, not an impact forecast.
+            </p>
+            <a href="https://science.nasa.gov/solar-system/asteroids/facts/" target="_blank" rel="noreferrer">VISIT NASA ASTEROID FACTS ↗</a>
+          </article>
+        </section>
+
+        <section class="tracking-steps">
+          <div class="about-index">05 // HOW A SIGNAL BECOMES AN ORBIT</div>
+          <div class="tracking-step-grid">
+            <div class="tracking-step"><span>01</span><strong>TELESCOPE</strong><p>Sky surveys and follow-up observations record a moving point against the stars.</p></div>
+            <div class="tracking-step"><span>02</span><strong>MINOR PLANET CENTER</strong><p>Observations are shared so independent sightings can be connected to one object.</p></div>
+            <div class="tracking-step"><span>03</span><strong>JPL / CNEOS</strong><p>Orbit solutions and close-approach geometry are refined as more observations arrive.</p></div>
+            <div class="tracking-step"><span>04</span><strong>YOUR ORBIT LOG</strong><p>We scale the record into a playful scene while keeping the source measurements visible.</p></div>
+          </div>
+        </section>
+
+        <section class="about-sources">
+          <span class="about-index">SOURCE DECK</span>
+          <div class="source-links">
+            <a href="https://api.nasa.gov" target="_blank" rel="noreferrer">NASA OPEN APIs ↗</a>
+            <a href="https://www.jpl.nasa.gov/edu/resources/teachable-moment/how-nasa-studies-and-tracks-asteroids-near-and-far/" target="_blank" rel="noreferrer">JPL TRACKING GUIDE ↗</a>
+            <a href="https://cneos.jpl.nasa.gov/" target="_blank" rel="noreferrer">CNEOS ↗</a>
+          </div>
+        </section>
       </main>
     {:else if view === "settings"}
       <main class="page-content settings-view">
@@ -489,8 +715,29 @@
                 <button class:active={earthTheme === theme.id} class="theme-option" style={"--theme-color: " + theme.color + "; --theme-surface: " + theme.surface} on:click={() => updateEarthTheme(theme.id)}>
                   <span class="theme-swatch"></span><span>{theme.name}</span>{#if earthTheme === theme.id}<b>✓</b>{/if}
                 </button>
+                {/each}
+            </div>
+            <div class="theme-label"><span>LANDMASS PATTERN</span><span>PIXEL MAP</span></div>
+            <div class="pattern-grid">
+              {#each earthPatterns as pattern}
+                <button class:active={earthPattern === pattern.id} class="pattern-option" on:click={() => updateEarthPattern(pattern.id)}>
+                  <span class={"pattern-swatch pattern-" + pattern.id}></span>
+                  <span><strong>{pattern.name}</strong><small>{pattern.detail}</small></span>
+                  {#if earthPattern === pattern.id}<b>✓</b>{/if}
+                </button>
               {/each}
             </div>
+            <div class="color-controls">
+              <label class="color-control"><span>LANDMASS COLOR</span><input type="color" bind:value={landColor} on:input={persistProfile} /></label>
+              <label class="color-control"><span>FLUID COLOR</span><input type="color" bind:value={fluidColor} on:input={persistProfile} /></label>
+              <label class="color-control"><span>ATMOSPHERE</span><input type="color" bind:value={atmosphereColor} on:input={persistProfile} /></label>
+            </div>
+            <label class="toggle-row">
+              <input type="checkbox" bind:checked={atmosphereEnabled} on:change={persistProfile} />
+              <span>ATMOSPHERE LAYER</span>
+              <small>{atmosphereEnabled ? "GLOW SHELL ON" : "GLOW SHELL OFF"}</small>
+            </label>
+            <p class="settings-copy colour-note">Pick any fluid colour: ocean blue, toxic green, molten red or something entirely yours. The pattern is redrawn as a pixel map around the globe.</p>
           </div>
           <div class="settings-card">
             <div class="panel-header"><span>NASA ACCESS</span><span class="panel-index">A-02</span></div>
