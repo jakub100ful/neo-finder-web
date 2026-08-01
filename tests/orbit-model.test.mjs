@@ -1,0 +1,109 @@
+import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import test from "node:test";
+
+import {
+  EARTH_RADIUS_SCENE,
+  MOON_ORBIT_RADIUS,
+  MOON_RADIUS_SCENE,
+  NEO_ORBIT_PHASE_RATE,
+  ZOOM_MAX_MULTIPLIER,
+  ZOOM_MIN_MULTIPLIER,
+  clampCameraDistance,
+  getMoonRelativePosition,
+  getNeoOrbitPosition,
+  getOrbitalRenderState,
+  getZoomBounds,
+  getZoomScale
+} from "../src/lib/orbit-model.mjs";
+
+const nearlyEqual = (actual, expected, tolerance = 1e-6) => {
+  assert.ok(Math.abs(actual - expected) <= tolerance, `${actual} is not within ${tolerance} of ${expected}`);
+};
+
+const distance = ({ x, y, z }) => Math.sqrt(x ** 2 + y ** 2 + z ** 2);
+
+test("the Earth and Moon use the same relative scale", () => {
+  const moonAtStart = getMoonRelativePosition(0);
+
+  nearlyEqual(distance(moonAtStart), MOON_ORBIT_RADIUS);
+  nearlyEqual(moonAtStart.x, MOON_ORBIT_RADIUS);
+  assert.ok(MOON_ORBIT_RADIUS > EARTH_RADIUS_SCENE);
+  assert.ok(MOON_RADIUS_SCENE < EARTH_RADIUS_SCENE);
+});
+
+test("the orbital model moves the Moon instead of leaving it at origin", () => {
+  const moonAtQuarterTurn = getMoonRelativePosition(Math.PI / 2);
+
+  nearlyEqual(moonAtQuarterTurn.x, 0, 1e-5);
+  nearlyEqual(moonAtQuarterTurn.z, MOON_ORBIT_RADIUS);
+});
+
+test("NEOs retain their orbital radius, inclination and phase", () => {
+  const metrics = { radius: 31, inclination: 0.35, phase: 0.4, speed: 0.8, size: 1.6 };
+  const position = getNeoOrbitPosition(metrics);
+  const horizontalRadius = Math.sqrt(position.x ** 2 + position.z ** 2);
+
+  nearlyEqual(horizontalRadius, metrics.radius);
+  nearlyEqual(position.y, Math.sin(metrics.phase) * metrics.radius * metrics.inclination);
+  assert.ok(metrics.speed * NEO_ORBIT_PHASE_RATE > 0);
+});
+
+test("the renderer state includes visible Earth, Moon and NEO bodies", () => {
+  const state = getOrbitalRenderState({
+    moonPhase: 1.1,
+    neos: [
+      { id: "neo-a", radius: 22, inclination: 0.1, phase: 0.4, speed: 0.5, size: 1 },
+      { id: "neo-b", radius: 34, inclination: -0.2, phase: 1.2, speed: 1.1, size: 2 }
+    ]
+  });
+
+  assert.deepEqual(
+    state.bodies.map((body) => body.kind),
+    ["earth", "moon", "neo", "neo"]
+  );
+  assert.ok(state.bodies.every((body) => body.visible));
+  assert.equal(state.moon.tidallyLocked, true);
+  assert.notDeepEqual(state.moon.position, { x: 0, y: 0, z: 0 });
+  assert.equal(state.neos.length, 2);
+});
+
+test("zoom is bounded and reports a scale the renderer can use", () => {
+  const defaultDistance = 74.43;
+  const bounds = getZoomBounds(defaultDistance);
+
+  nearlyEqual(bounds.min, defaultDistance * ZOOM_MIN_MULTIPLIER);
+  nearlyEqual(bounds.max, defaultDistance * ZOOM_MAX_MULTIPLIER);
+  nearlyEqual(clampCameraDistance(0, defaultDistance), bounds.min);
+  nearlyEqual(clampCameraDistance(Number.POSITIVE_INFINITY, defaultDistance), defaultDistance);
+  nearlyEqual(clampCameraDistance(bounds.max * 2, defaultDistance), bounds.max);
+  assert.equal(getZoomScale(bounds.min, defaultDistance), Number(ZOOM_MIN_MULTIPLIER.toFixed(1)));
+  assert.equal(getZoomScale(bounds.max, defaultDistance), Number(ZOOM_MAX_MULTIPLIER.toFixed(1)));
+});
+
+test("the Svelte scene makes WebGL primary and keeps a failure fallback", async () => {
+  const source = await readFile(new URL("../src/lib/SpaceScene.svelte", import.meta.url), "utf8");
+
+  for (const marker of [
+    'data-fallback-body="moon"',
+    'data-fallback-body="neo"',
+    "fallback-earth",
+    "--fallback-earth-scale",
+    "MeshStandardMaterial",
+    "alpha: false",
+    "compositor-safe presentation layer"
+  ]) {
+    assert.ok(source.includes(marker), `missing 3D renderer marker: ${marker}`);
+  }
+
+  assert.ok(!source.includes('data-fallback-body="sun"'));
+  assert.ok(!source.includes("sunSystem"));
+});
+
+test("the catalogue exposes an anchor-date editor", async () => {
+  const source = await readFile(new URL("../src/routes/+page.svelte", import.meta.url), "utf8");
+
+  for (const marker of ["dateReturnView", "openDateEditor(\"catalogue\")", "CHANGE DATE", "UPDATE ORBIT"]) {
+    assert.ok(source.includes(marker), `missing catalogue date editor marker: ${marker}`);
+  }
+});

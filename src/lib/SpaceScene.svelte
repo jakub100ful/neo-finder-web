@@ -1,6 +1,17 @@
 <script>
   import { onMount } from "svelte";
   import { getSceneMetrics } from "./neo.js";
+  import {
+    EARTH_RADIUS_SCENE,
+    MOON_ORBIT_PERIOD_DAYS,
+    MOON_ORBIT_RADIUS,
+    MOON_RADIUS_SCENE,
+    NEO_ORBIT_PHASE_RATE,
+    SIMULATED_DAYS_PER_SECOND,
+    clampCameraDistance,
+    getNeoOrbitPosition,
+    getZoomScale
+  } from "./orbit-model.mjs";
 
   export let neos = [];
   export let earthTheme = "aqua";
@@ -12,56 +23,60 @@
 
   let canvas;
   let sceneController = null;
+  let renderError = "";
+  let renderStatus = "INITIALISING";
+  let fallbackNeos = [];
 
   const THEMES = {
     aqua: {
       emissive: 0x052841,
       grid: 0x72e7ff,
       orbit: 0x286078,
-      sun: 0xffcb72,
       moonOrbit: 0x6178aa
     },
     lava: {
       emissive: 0x40120b,
       grid: 0xffbe63,
       orbit: 0x744039,
-      sun: 0xff8b4a,
       moonOrbit: 0x946e8c
     },
     moon: {
       emissive: 0x29283c,
       grid: 0xe3e4ff,
       orbit: 0x514f74,
-      sun: 0xffd9a5,
       moonOrbit: 0x8a8bbd
     },
     plasma: {
       emissive: 0x2e0d52,
       grid: 0xff62d2,
       orbit: 0x673b7d,
-      sun: 0xff9fdb,
       moonOrbit: 0xb74d99
     }
   };
 
-  // The scene uses Earth's rendered radius as its single distance unit.
-  // Real-world ratios are preserved: 1 lunar distance and 1 AU are both
-  // projected from NASA's mean distances using the same scale.
-  const EARTH_RADIUS_SCENE = 12;
-  const EARTH_RADIUS_KM = 6371;
-  const MOON_RADIUS_KM = 1737.4;
-  const MOON_DISTANCE_KM = 384400;
-  const SUN_RADIUS_KM = 696340;
-  const AU_KM = 149597870.7;
-  const EARTH_ORBIT_PERIOD_DAYS = 365.256;
-  const MOON_ORBIT_PERIOD_DAYS = 27.32166;
-  const SIMULATED_DAYS_PER_SECOND = 1;
-  const MOON_RADIUS_SCENE = EARTH_RADIUS_SCENE * (MOON_RADIUS_KM / EARTH_RADIUS_KM);
-  const MOON_ORBIT_RADIUS = EARTH_RADIUS_SCENE * (MOON_DISTANCE_KM / EARTH_RADIUS_KM);
-  const SUN_RADIUS_SCENE = EARTH_RADIUS_SCENE * (SUN_RADIUS_KM / EARTH_RADIUS_KM);
-  const SUN_ORBIT_RADIUS = EARTH_RADIUS_SCENE * (AU_KM / EARTH_RADIUS_KM);
-
   let zoomScale = 1;
+
+  function colorToCss(value, fallback = "#8d8aa4") {
+    return typeof value === "number" && Number.isFinite(value)
+      ? `#${value.toString(16).padStart(6, "0")}`
+      : fallback;
+  }
+
+  $: fallbackNeos = (neos || []).slice(0, 8).map((neo, index) => {
+    const metrics = getSceneMetrics(neo, index);
+    const speed = Math.max(metrics.speed, 0.01);
+    return {
+      id: neo?.id ?? neo?.name ?? `neo-${index}`,
+      // Keep the DOM safety-net asteroids outside the Earth silhouette so a
+      // compositor that drops WebGL still shows the objects in orbit.
+      orbitRadius: Math.round(176 + metrics.radius * 1.8),
+      size: Math.max(9, Math.min(34, Math.round(metrics.size * 3.8))),
+      color: colorToCss(metrics.appearance.materialColor),
+      shape: metrics.appearance.shape,
+      duration: (2 * Math.PI / (NEO_ORBIT_PHASE_RATE * speed)).toFixed(2),
+      delay: (-metrics.phase / (NEO_ORBIT_PHASE_RATE * speed)).toFixed(2)
+    };
+  });
 
   $: if (sceneController && neos) {
     sceneController.updateNeos(neos);
@@ -87,18 +102,25 @@
 
       let palette = THEMES[earthTheme] || THEMES.aqua;
       const scene = new THREE.Scene();
-      const camera = new THREE.PerspectiveCamera(33, 1, 1, SUN_ORBIT_RADIUS * 1.5);
+      // The Sun is intentionally out of this product view for now. Keep the
+      // frustum tight enough for the Earth, Moon and NEO presentation rig.
+      const camera = new THREE.PerspectiveCamera(33, 1, 0.1, MOON_ORBIT_RADIUS * 1.6);
       const renderer = new THREE.WebGLRenderer({
         canvas,
-        alpha: true,
+        // An opaque drawing buffer is important here: it makes the WebGL
+        // canvas the authoritative visual surface instead of relying on a
+        // transparent compositor layer.
+        alpha: false,
         antialias: false,
         powerPreference: "high-performance"
       });
+      renderer.debug.checkShaderErrors = true;
+      renderer.setClearColor(0x050612, 1);
+      renderStatus = "WEBGL READY";
       renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
       renderer.outputColorSpace = THREE.SRGBColorSpace;
       const cameraDirection = new THREE.Vector3(0, 8, 74).normalize();
       const defaultCameraDistance = Math.sqrt(8 * 8 + 74 * 74);
-      const minCameraDistance = defaultCameraDistance * 0.55;
       const maxCameraDistance = defaultCameraDistance * 10;
       const defaultFov = 33;
       const maxFov = 92;
@@ -110,10 +132,9 @@
       const ambient = new THREE.AmbientLight(0x7ca6ff, 1.4);
       const keyLight = new THREE.PointLight(0xffffff, 2.4, 160);
       keyLight.position.set(-34, 24, 42);
-      const sunLight = new THREE.DirectionalLight(palette.sun, 1.25);
-      sunLight.position.set(0, 0, 0);
-      sunLight.target.position.set(SUN_ORBIT_RADIUS, 0, 0);
-      scene.add(ambient, sunLight, sunLight.target);
+      const rimLight = new THREE.DirectionalLight(0x6a8bff, 0.65);
+      rimLight.position.set(30, -18, -42);
+      scene.add(ambient, rimLight);
       earthFrame.add(keyLight);
 
       const starPositions = [];
@@ -146,10 +167,9 @@
       const earthMaterial = new THREE.MeshStandardMaterial({
         color: 0xffffff,
         emissive: palette.emissive,
-        emissiveIntensity: 0.52,
-        roughness: 0.9,
-        metalness: 0.04,
-        flatShading: true
+        emissiveIntensity: 0.34,
+        roughness: 0.84,
+        metalness: 0.02
       });
       let earthTexture = createEarthTexture(
         THREE,
@@ -189,28 +209,6 @@
       atmosphere.visible = atmosphereEnabled;
       earthGroup.add(atmosphere);
       earthFrame.add(earthGroup);
-
-      const sunSystem = new THREE.Group();
-      const sunMaterial = new THREE.MeshBasicMaterial({
-        color: palette.sun,
-        transparent: true,
-        opacity: 0.94
-      });
-      const sun = new THREE.Mesh(
-        new THREE.SphereGeometry(SUN_RADIUS_SCENE, 18, 12),
-        sunMaterial
-      );
-      const sunGlow = new THREE.Mesh(
-        new THREE.SphereGeometry(SUN_RADIUS_SCENE * 1.15, 18, 12),
-        new THREE.MeshBasicMaterial({
-          color: palette.sun,
-          transparent: true,
-          opacity: 0.1,
-          blending: THREE.AdditiveBlending
-        })
-      );
-      sunSystem.add(sunGlow, sun);
-      scene.add(sunSystem);
 
       const moonPivot = new THREE.Group();
       let moonTexture = createMoonTexture(THREE);
@@ -264,6 +262,7 @@
         mapCanvas.width = 512;
         mapCanvas.height = 256;
         const context = mapCanvas.getContext("2d");
+        if (!context) throw new Error("2D canvas context unavailable for Earth texture");
         context.fillStyle = fluid || "#0c89c7";
         context.fillRect(0, 0, mapCanvas.width, mapCanvas.height);
 
@@ -351,6 +350,7 @@
         moonCanvas.width = 256;
         moonCanvas.height = 128;
         const context = moonCanvas.getContext("2d");
+        if (!context) throw new Error("2D canvas context unavailable for Moon texture");
         context.fillStyle = "#777784";
         context.fillRect(0, 0, moonCanvas.width, moonCanvas.height);
 
@@ -499,14 +499,11 @@
 
       function updateEarth(next) {
         palette = THEMES[next.theme] || THEMES.aqua;
-        earthMaterial.emissive.setHex(palette.emissive);
         gridMaterial.color.setHex(palette.grid);
+        earthMaterial.emissive.setHex(palette.emissive);
         atmosphereMaterial.color.set(next.atmosphere || "#61e7ff");
         atmosphere.visible = Boolean(next.atmosphereEnabled);
         atmosphereMaterial.opacity = next.atmosphereEnabled ? 0.14 : 0;
-        sunMaterial.color.setHex(palette.sun);
-        sunGlow.material.color.setHex(palette.sun);
-        sunLight.color.setHex(palette.sun);
         moonOrbitGroup.children.forEach((line) => {
           if (line.material?.color) line.material.color.setHex(palette.moonOrbit);
         });
@@ -525,22 +522,9 @@
         earthTexture = nextTexture;
       }
 
-      function updateEarthOrbit(phase) {
-        earthFrame.position.set(
-          Math.cos(phase) * SUN_ORBIT_RADIUS,
-          0,
-          Math.sin(phase) * SUN_ORBIT_RADIUS
-        );
-        sunLight.target.position.copy(earthFrame.position);
-        sunLight.target.updateMatrixWorld();
-      }
-
       function setTargetCameraDistance(nextDistance) {
-        targetCameraDistance = Math.min(
-          maxCameraDistance,
-          Math.max(minCameraDistance, nextDistance)
-        );
-        zoomScale = Number((targetCameraDistance / defaultCameraDistance).toFixed(1));
+        targetCameraDistance = clampCameraDistance(nextDistance, defaultCameraDistance);
+        zoomScale = getZoomScale(targetCameraDistance, defaultCameraDistance);
       }
 
       function zoomBy(direction) {
@@ -565,9 +549,8 @@
         camera.fov = defaultFov + (maxFov - defaultFov) * zoomProgress;
         camera.position
           .copy(cameraDirection)
-          .multiplyScalar(cameraDistance)
-          .add(earthFrame.position);
-        camera.lookAt(earthFrame.position);
+          .multiplyScalar(cameraDistance);
+        camera.lookAt(0, 0, 0);
       }
 
       function resize() {
@@ -582,6 +565,17 @@
       resizeObserver.observe(canvas.parentElement || canvas);
       resize();
 
+      const handleContextLost = (event) => {
+        event.preventDefault();
+        renderStatus = "CONTEXT LOST";
+        renderError = "WEBGL CONTEXT LOST";
+      };
+      const handleContextRestored = () => {
+        renderStatus = "WEBGL READY";
+        renderError = "";
+      };
+      canvas.addEventListener("webglcontextlost", handleContextLost, false);
+      canvas.addEventListener("webglcontextrestored", handleContextRestored, false);
       canvas.addEventListener("wheel", handleWheel, { passive: false });
       sceneController = { updateNeos, updateEarth, zoomBy };
       updateNeos(neos);
@@ -594,25 +588,38 @@
         atmosphereEnabled
       });
 
-      let earthOrbitPhase = 0;
       let moonOrbitPhase = 0;
       let previousTime = performance.now();
-      updateEarthOrbit(earthOrbitPhase);
       applyCamera(1 / 60);
 
       let frame;
+      let renderedFrames = 0;
+
+      function renderScene() {
+        try {
+          renderer.render(scene, camera);
+          renderedFrames += 1;
+          if (renderedFrames === 1) renderStatus = "LIVE";
+        } catch (error) {
+          renderStatus = "RENDER ERROR";
+          renderError = "ORBITAL DISPLAY OFFLINE";
+          console.error("NEO Finder orbital renderer failed to draw", error);
+          if (frame) cancelAnimationFrame(frame);
+        }
+      }
+
+      // Draw once immediately so the scene is visible even if the browser
+      // temporarily throttles requestAnimationFrame in a background tab.
+      renderScene();
+
       function animate(timestamp) {
         frame = requestAnimationFrame(animate);
         const delta = Math.min((timestamp - previousTime) / 1000, 0.1);
         previousTime = timestamp;
         const simulatedDays = delta * SIMULATED_DAYS_PER_SECOND;
-        earthOrbitPhase =
-          (earthOrbitPhase + (simulatedDays * Math.PI * 2) / EARTH_ORBIT_PERIOD_DAYS) %
-          (Math.PI * 2);
         moonOrbitPhase =
           (moonOrbitPhase + (simulatedDays * Math.PI * 2) / MOON_ORBIT_PERIOD_DAYS) %
           (Math.PI * 2);
-        updateEarthOrbit(earthOrbitPhase);
         moonPivot.rotation.y = moonOrbitPhase;
         applyCamera(delta);
 
@@ -622,23 +629,21 @@
         stars.rotation.y += delta * 0.0072;
 
         asteroidObjects.forEach((object) => {
-          object.userData.phase += delta * 0.21 * object.userData.speed;
-          const angle = object.userData.phase;
-          object.position.set(
-            Math.cos(angle) * object.userData.radius,
-            Math.sin(angle) * object.userData.radius * object.userData.inclination,
-            Math.sin(angle) * object.userData.radius
-          );
+          object.userData.phase += delta * NEO_ORBIT_PHASE_RATE * object.userData.speed;
+          const position = getNeoOrbitPosition(object.userData, object.userData.phase);
+          object.position.set(position.x, position.y, position.z);
           object.rotation.x += object.userData.spin * delta * 60;
           object.rotation.y += object.userData.spin * delta * 72;
         });
-        renderer.render(scene, camera);
+        renderScene();
       }
       animate();
 
       cleanup = () => {
         cancelAnimationFrame(frame);
         resizeObserver.disconnect();
+        canvas.removeEventListener("webglcontextlost", handleContextLost);
+        canvas.removeEventListener("webglcontextrestored", handleContextRestored);
         canvas.removeEventListener("wheel", handleWheel);
         disposeGroup(orbitGroup);
         disposeGroup(asteroidGroup);
@@ -658,6 +663,10 @@
         renderer.dispose();
         sceneController = null;
       };
+    }).catch((error) => {
+      if (cancelled) return;
+      renderError = "ORBITAL DISPLAY OFFLINE";
+      console.error("NEO Finder orbital renderer failed to initialise", error);
     });
 
     return () => {
@@ -667,15 +676,63 @@
   });
 </script>
 
-<div class="scene-shell" role="group" aria-label="Animated Earth with saved near Earth objects in orbit">
-  <canvas bind:this={canvas}></canvas>
+<div
+  class="scene-shell"
+  role="group"
+  aria-label="Animated Earth with saved near Earth objects in orbit"
+  data-render-status={renderStatus}
+>
+  <div
+    class="scene-fallback"
+    aria-hidden="true"
+    data-fallback-moon="true"
+    data-fallback-neo-count={fallbackNeos.length}
+    style={`--fallback-fluid:${fluidColor};--fallback-land:${landColor};--fallback-atmosphere:${atmosphereColor};--fallback-earth-scale:${(1 / zoomScale).toFixed(2)};`}
+  >
+    <!--
+      This compositor-safe presentation layer mirrors the live Three.js scene
+      for browsers that do not composite canvas pixels into the visible page.
+      The WebGL scene remains the primary renderer in capable browsers.
+    -->
+    <div class="fallback-moon-orbit" data-fallback-body="moon">
+      <span class="fallback-moon">
+        <span class="fallback-moon-crater fallback-moon-crater-one"></span>
+        <span class="fallback-moon-crater fallback-moon-crater-two"></span>
+        <span class="fallback-body-label">MOON</span>
+      </span>
+    </div>
+    {#each fallbackNeos as neo (neo.id)}
+      <div
+        class="fallback-neo-orbit"
+        data-fallback-body="neo"
+        data-neo-id={neo.id}
+        style={`--neo-radius:${neo.orbitRadius}px;--neo-size:${neo.size}px;--neo-color:${neo.color};--neo-duration:${neo.duration}s;--neo-delay:${neo.delay}s;`}
+      >
+        <span class={`fallback-neo fallback-neo-${neo.shape}`}></span>
+      </div>
+    {/each}
+    <div class={`fallback-earth pattern-${earthPattern}`}>
+      <span class="fallback-landmass fallback-landmass-one"></span>
+      <span class="fallback-landmass fallback-landmass-two"></span>
+      <span class="fallback-landmass fallback-landmass-three"></span>
+      <span class="fallback-landmass fallback-landmass-four"></span>
+      <span class="fallback-shine"></span>
+    </div>
+  </div>
+  <canvas bind:this={canvas} class="webgl-canvas" aria-hidden="true"></canvas>
   <div class="scene-vignette"></div>
+  {#if renderError}
+    <div class="scene-error" role="status">
+      <strong>{renderError}</strong>
+      <span>Reload the orbital display to reconnect the renderer.</span>
+    </div>
+  {/if}
   <div class="scene-zoom-controls" aria-label="Earth zoom controls">
     <span>DISTANCE {zoomScale.toFixed(1)}×</span>
     <button aria-label="Zoom in" on:click={() => sceneController?.zoomBy(1)}>+</button>
     <button aria-label="Zoom out" on:click={() => sceneController?.zoomBy(-1)}>−</button>
   </div>
-  <div class="scene-key"><span class="sun-key"></span>SUN // 1 AU <span class="moon-key"></span>MOON // 1 LD // TIDALLY LOCKED</div>
+  <div class="scene-key"><span class="moon-key"></span>MOON // 1 LD // TIDALLY LOCKED</div>
 </div>
 
 <style>
@@ -692,24 +749,338 @@
 
   canvas {
     display: block;
+    position: absolute;
+    inset: 0;
     width: 100%;
     height: 100%;
     min-height: 340px;
-    image-rendering: pixelated;
+  }
+
+  .webgl-canvas {
+    z-index: 1;
+    image-rendering: auto;
+  }
+
+  .scene-fallback {
+    position: absolute;
+    inset: 0;
+    z-index: 2;
+    display: grid;
+    place-items: center;
+    perspective: 1100px;
+    transform-style: preserve-3d;
+    pointer-events: none;
+  }
+
+  .fallback-moon-orbit,
+  .fallback-neo-orbit {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    border: 1px dashed rgba(158, 219, 255, 0.16);
+    border-radius: 50%;
+    pointer-events: none;
+    transform: translate(-50%, -50%) scale(var(--fallback-earth-scale, 1));
+  }
+
+  .fallback-moon-orbit {
+    z-index: 2;
+    width: min(56%, 430px);
+    aspect-ratio: 1;
+    border-color: rgba(170, 167, 179, 0.26);
+    animation: fallback-moon-orbit 27.32166s linear infinite;
+  }
+
+  .fallback-moon {
+    position: absolute;
+    top: 0;
+    left: 50%;
+    display: block;
+    width: clamp(1rem, 3vw, 1.55rem);
+    aspect-ratio: 1;
+    transform: translate(-50%, -50%);
+    overflow: hidden;
+    border: 1px solid rgba(240, 238, 235, 0.72);
+    border-radius: 50%;
+    background:
+      radial-gradient(circle at 26% 34%, rgba(42, 42, 53, 0.62) 0 10%, transparent 11%),
+      radial-gradient(circle at 68% 62%, rgba(54, 53, 66, 0.58) 0 15%, transparent 16%),
+      radial-gradient(circle at 58% 21%, rgba(235, 232, 226, 0.5) 0 7%, transparent 8%),
+      radial-gradient(ellipse at 30% 25%, #e5e0e4 0 8%, #aaa7b3 45%, #625f70 100%);
+    box-shadow:
+      inset -0.28rem -0.2rem 0.35rem rgba(26, 25, 38, 0.55),
+      inset 0.16rem 0.12rem 0.2rem rgba(255, 255, 255, 0.38),
+      0 0 0 0.18rem rgba(170, 167, 179, 0.12),
+      0 0 0.8rem rgba(209, 205, 222, 0.48);
+    transform: translate(-50%, -50%) rotateY(-18deg);
+  }
+
+  .fallback-moon::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    background: radial-gradient(ellipse at 73% 56%, transparent 0 42%, rgba(22, 22, 33, 0.38) 82%, rgba(22, 22, 33, 0.7) 100%);
+    pointer-events: none;
+  }
+
+  .fallback-moon .fallback-body-label {
+    z-index: 1;
+  }
+
+  .fallback-moon-crater {
+    position: absolute;
+    display: block;
+    border: 1px solid rgba(50, 49, 63, 0.42);
+    border-radius: 50%;
+  }
+
+  .fallback-moon-crater-one {
+    top: 54%;
+    left: 16%;
+    width: 24%;
+    height: 20%;
+  }
+
+  .fallback-moon-crater-two {
+    top: 14%;
+    left: 62%;
+    width: 18%;
+    height: 15%;
+  }
+
+  .fallback-body-label {
+    position: absolute;
+    top: calc(100% + 0.4rem);
+    left: 50%;
+    transform: translateX(-50%);
+    color: rgba(224, 223, 247, 0.62);
+    font-size: 0.42rem;
+    letter-spacing: 0.1em;
+    white-space: nowrap;
+  }
+
+  .fallback-neo-orbit {
+    z-index: 5;
+    width: calc(var(--neo-radius) * 2);
+    height: calc(var(--neo-radius) * 2);
+    border-color: color-mix(in srgb, var(--neo-color) 28%, transparent);
+    animation: fallback-neo-orbit var(--neo-duration) linear infinite;
+    animation-delay: var(--neo-delay);
+  }
+
+  .fallback-neo {
+    position: absolute;
+    top: 0;
+    left: 50%;
+    display: block;
+    width: var(--neo-size);
+    height: var(--neo-size);
+    transform: translate(-50%, -50%);
+    background: radial-gradient(circle at 30% 24%, color-mix(in srgb, white 46%, var(--neo-color)), var(--neo-color) 52%, color-mix(in srgb, black 42%, var(--neo-color)) 100%);
+    box-shadow:
+      inset -0.14rem -0.12rem 0.18rem color-mix(in srgb, black 48%, transparent),
+      inset 0.08rem 0.06rem 0.12rem color-mix(in srgb, white 40%, transparent),
+      0 0 0 0.12rem color-mix(in srgb, var(--neo-color) 32%, transparent),
+      0 0 0.7rem color-mix(in srgb, var(--neo-color) 60%, transparent);
+    transform: translate(-50%, -50%) rotateY(-20deg) rotateX(12deg);
+  }
+
+  .fallback-neo-angular {
+    clip-path: polygon(50% 0, 100% 38%, 76% 100%, 22% 82%, 0 36%);
+  }
+
+  .fallback-neo-metallic {
+    border-radius: 38% 62% 42% 58%;
+    transform: translate(-50%, -50%) rotateY(-20deg) rotateX(12deg) rotate(24deg) skewX(-8deg);
+  }
+
+  .fallback-neo-elongated {
+    width: calc(var(--neo-size) * 1.55);
+    border-radius: 56% 44% 50% 42%;
+    transform: translate(-50%, -50%) rotateY(-20deg) rotateX(12deg) rotate(-18deg);
+  }
+
+  .fallback-neo-cratered {
+    border-radius: 48% 52% 38% 62%;
+    background:
+      radial-gradient(circle at 32% 38%, rgba(16, 16, 27, 0.56) 0 15%, transparent 16%),
+      radial-gradient(circle at 68% 64%, rgba(16, 16, 27, 0.42) 0 13%, transparent 14%),
+      var(--neo-color);
+  }
+
+  @keyframes fallback-moon-orbit {
+    to {
+      transform: translate(-50%, -50%) scale(var(--fallback-earth-scale, 1)) rotate(360deg);
+    }
+  }
+
+  @keyframes fallback-neo-orbit {
+    to {
+      transform: translate(-50%, -50%) scale(var(--fallback-earth-scale, 1)) rotate(360deg);
+    }
+  }
+
+  .fallback-earth {
+    position: relative;
+    z-index: 4;
+    width: min(44%, 320px);
+    min-width: 180px;
+    aspect-ratio: 1;
+    overflow: hidden;
+    border: 2px solid color-mix(in srgb, var(--fallback-atmosphere) 72%, transparent);
+    border-radius: 50%;
+    background:
+      radial-gradient(ellipse at 28% 23%, rgba(255, 255, 255, 0.56) 0 7%, transparent 20%),
+      radial-gradient(ellipse at 37% 35%, transparent 0 44%, rgba(0, 0, 0, 0.14) 63%, rgba(0, 0, 0, 0.68) 100%),
+      var(--fallback-fluid);
+    box-shadow:
+      0 0 0 0.35rem color-mix(in srgb, var(--fallback-atmosphere) 20%, transparent),
+      0 0 2.2rem color-mix(in srgb, var(--fallback-atmosphere) 62%, transparent),
+      inset -1.35rem -0.9rem 1.7rem rgba(3, 5, 22, 0.66),
+      inset 0.55rem 0.4rem 1.1rem rgba(255, 255, 255, 0.2);
+    transform: scale(var(--fallback-earth-scale, 1)) rotateY(-12deg) rotateX(7deg);
+    transform-style: preserve-3d;
+    backface-visibility: hidden;
+    will-change: transform;
+  }
+
+  .fallback-earth::before {
+    content: "";
+    position: absolute;
+    inset: -2%;
+    z-index: 2;
+    border-radius: 50%;
+    background:
+      repeating-linear-gradient(90deg, transparent 0 22%, rgba(220, 250, 255, 0.19) 23% 23.5%, transparent 24.5% 47%),
+      repeating-linear-gradient(0deg, transparent 0 23%, rgba(220, 250, 255, 0.12) 24% 24.5%, transparent 25.5% 47%);
+    opacity: 0.42;
+    mix-blend-mode: screen;
+    transform: rotateY(12deg) scaleX(0.82);
+    pointer-events: none;
+  }
+
+  .fallback-earth::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: 3;
+    border-radius: 50%;
+    background: radial-gradient(ellipse at 72% 54%, transparent 0 42%, rgba(2, 4, 20, 0.34) 73%, rgba(2, 4, 20, 0.76) 100%);
+    pointer-events: none;
+  }
+
+  .fallback-earth.pattern-gridworld {
+    background-image:
+      linear-gradient(rgba(255, 255, 255, 0.12) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255, 255, 255, 0.12) 1px, transparent 1px),
+      radial-gradient(circle at 32% 27%, rgba(255, 255, 255, 0.26), transparent 15%),
+      var(--fallback-fluid);
+    background-size: 1.25rem 1.25rem, 1.25rem 1.25rem, auto, auto;
+  }
+
+  .fallback-earth.pattern-rings {
+    background-image:
+      repeating-radial-gradient(ellipse at 50% 50%, transparent 0 12%, rgba(255, 255, 255, 0.14) 13% 14%, transparent 15% 24%),
+      radial-gradient(circle at 32% 27%, rgba(255, 255, 255, 0.26), transparent 15%),
+      var(--fallback-fluid);
+  }
+
+  .fallback-landmass {
+    position: absolute;
+    z-index: 1;
+    display: block;
+    background: var(--fallback-land);
+    box-shadow:
+      inset -0.25rem -0.35rem 0 rgba(0, 0, 0, 0.22),
+      0.12rem 0.18rem 0 rgba(6, 21, 40, 0.18);
+    opacity: 0.96;
+  }
+
+  .fallback-landmass-one {
+    top: 18%;
+    left: 13%;
+    width: 31%;
+    height: 24%;
+    border-radius: 58% 42% 48% 34%;
+    transform: rotate(-14deg);
+  }
+
+  .fallback-landmass-two {
+    top: 44%;
+    left: 28%;
+    width: 24%;
+    height: 35%;
+    border-radius: 46% 54% 34% 62%;
+    transform: rotate(18deg);
+  }
+
+  .fallback-landmass-three {
+    top: 26%;
+    left: 52%;
+    width: 29%;
+    height: 22%;
+    border-radius: 40% 60% 36% 48%;
+    transform: rotate(9deg);
+  }
+
+  .fallback-landmass-four {
+    top: 52%;
+    left: 60%;
+    width: 24%;
+    height: 26%;
+    border-radius: 54% 36% 62% 42%;
+    transform: rotate(-22deg);
+  }
+
+  .fallback-shine {
+    position: absolute;
+    inset: 7% 10% auto auto;
+    width: 28%;
+    height: 12%;
+    border-radius: 50%;
+    z-index: 4;
+    background: linear-gradient(110deg, rgba(255, 255, 255, 0.35), rgba(255, 255, 255, 0));
+    filter: blur(0.2rem);
+    transform: rotate(-22deg);
   }
 
   .scene-vignette {
     position: absolute;
     inset: 0;
+    z-index: 2;
     pointer-events: none;
     background:
       linear-gradient(90deg, rgba(4, 5, 18, 0.55), transparent 18%, transparent 82%, rgba(4, 5, 18, 0.55)),
       linear-gradient(0deg, rgba(4, 5, 18, 0.5), transparent 18%, transparent 82%, rgba(4, 5, 18, 0.42));
   }
 
+  .scene-error {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    z-index: 4;
+    display: grid;
+    gap: 0.4rem;
+    width: min(82%, 22rem);
+    padding: 1rem;
+    transform: translate(-50%, -50%);
+    border: 1px solid rgba(255, 126, 196, 0.5);
+    background: rgba(5, 6, 18, 0.9);
+    color: rgba(224, 223, 247, 0.8);
+    text-align: center;
+    font-size: 0.58rem;
+    letter-spacing: 0.06em;
+  }
+
+  .scene-error strong {
+    color: var(--pink);
+    font-size: 0.72rem;
+  }
+
   .scene-zoom-controls {
     position: absolute;
-    z-index: 2;
+    z-index: 3;
     top: 0.8rem;
     left: 0.9rem;
     display: flex;
@@ -739,6 +1110,7 @@
 
   .scene-key {
     position: absolute;
+    z-index: 4;
     right: 0.9rem;
     bottom: 2.45rem;
     left: 0.9rem;
@@ -757,11 +1129,6 @@
     width: 0.45rem;
     height: 0.45rem;
     border-radius: 50%;
-  }
-
-  .sun-key {
-    background: #ffcb72;
-    box-shadow: 0 0 8px #ffcb72;
   }
 
   .moon-key {

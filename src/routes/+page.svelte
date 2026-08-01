@@ -63,13 +63,14 @@
     "CNEOS refines orbits using observations reported by telescopes and the Minor Planet Center.",
     "The real feed gives us size estimates, velocity and miss distance. This scene compresses those values for play.",
     "JPL's Small-Body Database can add physical clues such as albedo, spectral class and rotation period.",
-    "The scene keeps one distance scale: the Moon sits at one lunar distance and the Sun at one astronomical unit."
+    "The Moon takes about 27.3 days to orbit Earth; NEO motion is shown relative to each object's measured speed."
   ];
 
   let view = "intro";
   let lastView = "dashboard";
   let dateDraft = "";
   let activeDate = "";
+  let dateReturnView = "dashboard";
   let neoList = demoNeos;
   let savedNeos = [];
   let selectedNeo = null;
@@ -138,6 +139,7 @@
 
   function startJourney() {
     errorMessage = "";
+    dateReturnView = "dashboard";
     if (featureFlags.requireNasaToken && !token) {
       view = "token";
     } else {
@@ -171,7 +173,7 @@
     }
     activeDate = dateDraft;
     errorMessage = "";
-    view = "dashboard";
+    view = dateReturnView || "dashboard";
     await loadNeoList(activeDate);
   }
 
@@ -211,6 +213,13 @@
       return;
     }
     view = "catalogue";
+  }
+
+  function openDateEditor(returnView = view) {
+    dateReturnView = returnView || "dashboard";
+    dateDraft = activeDate;
+    errorMessage = "";
+    view = "date";
   }
 
   function openAbout() {
@@ -360,9 +369,9 @@
     <div class="onboarding-orbit orbit-left"></div>
     <div class="onboarding-orbit orbit-right"></div>
     <section class="onboarding-panel date-panel">
-      <div class="panel-topline"><span>PERSONAL ORBIT // INPUT</span><span>STEP 02 / 02</span></div>
+      <div class="panel-topline"><span>PERSONAL ORBIT // INPUT</span><span>{activeDate ? "UPDATE SIGNAL" : "STEP 02 / 02"}</span></div>
       <div class="date-glyph">✦</div>
-      <h1>Choose your anchor date.</h1>
+      <h1>{activeDate ? "Update your anchor date." : "Choose your anchor date."}</h1>
       <p class="lede">
         Birthdays, first dates, wedding days, launch days. Any date can become the centre of your own sky.
       </p>
@@ -370,7 +379,7 @@
         <label for="anchor-date">SIGNAL DATE</label>
         <input id="anchor-date" bind:value={dateDraft} type="date" />
         {#if errorMessage}<p class="form-error">{errorMessage}</p>{/if}
-        <button class="arcade-button" type="submit">ENTER ORBIT <span>→</span></button>
+        <button class="arcade-button" type="submit">{activeDate ? "UPDATE ORBIT" : "ENTER ORBIT"} <span>→</span></button>
       </form>
       <div class="date-note">
         <span class="status-dot"></span>
@@ -381,6 +390,7 @@
         {/if}
       </div>
       <button class="subtle-button" on:click={() => (view = "token")}>CONFIGURE NASA ACCESS</button>
+      {#if activeDate}<button class="subtle-button" on:click={() => (view = dateReturnView || "dashboard")}>CANCEL</button>{/if}
     </section>
   </main>
 {:else}
@@ -501,6 +511,7 @@
             </p>
           </div>
           <div class="heading-actions">
+            <button class="ghost-button" on:click={() => openDateEditor("catalogue")}>CHANGE DATE</button>
             <button class="ghost-button" on:click={() => loadNeoList(activeDate)} disabled={loading}>
               {loading ? "SCANNING..." : "REFRESH SIGNAL"}
             </button>
