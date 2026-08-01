@@ -379,11 +379,31 @@ function drawOrbit(ctx, radius, inclination, view, width, height, color, opacity
   ctx.restore();
 }
 
-function drawSphere(ctx, { center, radius, view, texture, rotationY = 0, lightDirection, atmosphere }) {
+function drawSphere(ctx, {
+  center,
+  radius,
+  view,
+  texture,
+  rotationY = 0,
+  lightDirection,
+  atmosphere,
+  imageBuffer
+}) {
+  if (
+    !Number.isFinite(radius) ||
+    radius <= 0 ||
+    !Number.isFinite(center?.x) ||
+    !Number.isFinite(center?.y)
+  ) return;
+
   const diameter = Math.max(2, Math.ceil(radius * 2) + 2);
   const left = Math.round(center.x - radius - 1);
   const top = Math.round(center.y - radius - 1);
-  const image = ctx.createImageData(diameter, diameter);
+  const image = imageBuffer?.image?.width === diameter && imageBuffer.image.height === diameter
+    ? imageBuffer.image
+    : ctx.createImageData(diameter, diameter);
+  if (imageBuffer) imageBuffer.image = image;
+  image.data.fill(0);
   const basis = getCameraBasis(view);
 
   if (atmosphere) {
@@ -470,6 +490,8 @@ function drawPolyhedron(ctx, { center, radius, view, polyhedron, rotation, color
 
 export function createSoftwareScene(canvas) {
   const context = canvas?.getContext?.("2d", { alpha: true });
+  const earthImageBuffer = {};
+  const moonImageBuffer = {};
   let width = 1;
   let height = 1;
   let pixelRatio = 1;
@@ -490,7 +512,7 @@ export function createSoftwareScene(canvas) {
   };
 
   function resize(nextWidth, nextHeight, nextPixelRatio = 1) {
-    pixelRatio = Math.min(2, Math.max(1, Number(nextPixelRatio) || 1));
+    pixelRatio = Math.min(1, Math.max(1, Number(nextPixelRatio) || 1));
     width = Math.max(1, Math.round((Number(nextWidth) || 1) * pixelRatio));
     height = Math.max(1, Math.round((Number(nextHeight) || 1) * pixelRatio));
     if (canvas) {
@@ -590,7 +612,8 @@ export function createSoftwareScene(canvas) {
           texture: state.earthMap,
           rotationY: state.motion.earthRotation,
           lightDirection,
-          atmosphere: state.earth.atmosphereEnabled ? state.earth.atmosphere : ""
+          atmosphere: state.earth.atmosphereEnabled ? state.earth.atmosphere : "",
+          imageBuffer: earthImageBuffer
         });
       } else if (body.kind === "moon") {
         drawSphere(context, {
@@ -600,7 +623,8 @@ export function createSoftwareScene(canvas) {
           texture: state.moonMap,
           rotationY: state.motion.moonPhase + Math.PI,
           lightDirection,
-          atmosphere: ""
+          atmosphere: "",
+          imageBuffer: moonImageBuffer
         });
       } else {
         const neoRadius = Math.max(1.8, Number(body.neo.size || 1.2) * 0.72);

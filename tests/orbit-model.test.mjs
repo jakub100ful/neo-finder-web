@@ -277,6 +277,31 @@ test("the Svelte scene uses WebGL plus a compositor-safe 3D renderer", async () 
   assert.ok(!source.includes("sunSystem"));
 });
 
+test("the live renderer parks fallback work and lowers GPU quality during interaction", async () => {
+  const source = await readFile(new URL("../src/lib/SpaceScene.svelte", import.meta.url), "utf8");
+  const rasterSource = await readFile(new URL("../src/lib/space-raster.mjs", import.meta.url), "utf8");
+
+  for (const marker of [
+    "let softwareFallbackActive = true",
+    "function setSoftwareFallbackActive",
+    "class:softwareIdle={!softwareFallbackActive}",
+    "if (softwareFallbackActive) {",
+    "controls.addEventListener(\"start\"",
+    "controls.addEventListener(\"end\"",
+    "interactionPixelRatio",
+    "renderer.setPixelRatio",
+    "renderer.debug.checkShaderErrors = import.meta.env.DEV"
+  ]) {
+    assert.ok(source.includes(marker), `missing performance marker: ${marker}`);
+  }
+
+  assert.match(source, /\.software-canvas\.softwareIdle\s*\{[\s\S]*?visibility:\s*hidden/);
+  assert.match(source, /renderedFrames === 1[\s\S]*?setSoftwareFallbackActive\(false\)/);
+  assert.ok(!source.includes("Object.fromEntries"));
+  assert.ok(rasterSource.includes("image.data.fill(0)"));
+  assert.ok(rasterSource.includes("imageBuffer"));
+});
+
 test("the catalogue exposes an anchor-date editor", async () => {
   const source = await readFile(new URL("../src/routes/+page.svelte", import.meta.url), "utf8");
 

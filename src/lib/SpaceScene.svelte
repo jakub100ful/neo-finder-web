@@ -36,6 +36,7 @@ import {
   let softwareCanvas;
   let sceneController = null;
   let softwareController = null;
+  let softwareFallbackActive = true;
   let renderError = "";
   let renderStatus = "INITIALISING";
   let earthRotation = 0;
@@ -80,6 +81,17 @@ import {
 
   let zoomScale = 1;
 
+  function setSoftwareFallbackActive(active) {
+    softwareFallbackActive = Boolean(active);
+    if (!softwareFallbackActive || !softwareController || !softwareCanvas) return;
+
+    softwareController.resize(
+      Math.max(softwareCanvas.clientWidth, 240),
+      Math.max(softwareCanvas.clientHeight, 240),
+      Math.min(window.devicePixelRatio || 1, 1)
+    );
+  }
+
   function getSoftwareNeos(nextNeos = []) {
     return (nextNeos || []).slice(0, 8).map((neo, index) => ({
       ...getSceneMetrics(neo, index),
@@ -118,7 +130,7 @@ import {
       softwareController.resize(
         Math.max(softwareCanvas.clientWidth, 240),
         Math.max(softwareCanvas.clientHeight, 240),
-        Math.min(window.devicePixelRatio || 1, 2)
+        Math.min(window.devicePixelRatio || 1, 1)
       );
       softwareController.setView(fallbackView);
       softwareController.updateEarth({
@@ -149,6 +161,9 @@ import {
       const maxCameraDistance = defaultCameraDistance * ZOOM_MAX_MULTIPLIER;
       const defaultFov = 33;
       const maxFov = 92;
+      const devicePixelRatio = Math.min(window.devicePixelRatio || 1, 2);
+      const idlePixelRatio = Math.min(devicePixelRatio, 1.5);
+      const interactionPixelRatio = Math.min(devicePixelRatio, 1);
       let cameraDistance = defaultCameraDistance;
       const cameraFar = maxCameraDistance + MOON_ORBIT_RADIUS + EARTH_RADIUS_SCENE * 4;
       const camera = new THREE.PerspectiveCamera(33, 1, 0.1, cameraFar);
@@ -158,13 +173,13 @@ import {
         // Supported browsers still see the Three.js scene above it; browsers
         // that drop WebGL pixels retain a visible orbital presentation.
         alpha: true,
-        antialias: true,
+        antialias: devicePixelRatio <= 1.25,
         powerPreference: "high-performance"
       });
-      renderer.debug.checkShaderErrors = true;
+      renderer.debug.checkShaderErrors = import.meta.env.DEV;
       renderer.setClearColor(0x050612, 0);
       renderStatus = "WEBGL READY";
-      renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+      renderer.setPixelRatio(idlePixelRatio);
       renderer.outputColorSpace = THREE.SRGBColorSpace;
       camera.position.copy(cameraDirection).multiplyScalar(defaultCameraDistance);
       camera.lookAt(0, 0, 0);
@@ -185,6 +200,7 @@ import {
       controls.update();
 
       function syncFallbackView() {
+        if (!softwareFallbackActive) return;
         const width = Math.max(canvas.clientWidth, 240);
         const height = Math.max(canvas.clientHeight, 240);
         const target = {
@@ -210,6 +226,29 @@ import {
       }
 
       controls.addEventListener("change", syncFallbackView);
+
+      function setRenderQuality(isInteracting) {
+        const nextPixelRatio = isInteracting ? interactionPixelRatio : idlePixelRatio;
+        if (Math.abs(renderer.getPixelRatio() - nextPixelRatio) < 0.01) return;
+        renderer.setPixelRatio(nextPixelRatio);
+        resize();
+      }
+
+      let qualityRestoreTimer = null;
+      const handleControlsStart = () => {
+        if (qualityRestoreTimer) window.clearTimeout(qualityRestoreTimer);
+        qualityRestoreTimer = null;
+        setRenderQuality(true);
+      };
+      const handleControlsEnd = () => {
+        if (qualityRestoreTimer) window.clearTimeout(qualityRestoreTimer);
+        qualityRestoreTimer = window.setTimeout(() => {
+          qualityRestoreTimer = null;
+          setRenderQuality(false);
+        }, 180);
+      };
+      controls.addEventListener("start", handleControlsStart);
+      controls.addEventListener("end", handleControlsEnd);
       syncFallbackView();
 
       const earthFrame = new THREE.Group();
@@ -550,7 +589,7 @@ import {
         renderer.setSize(width, height, false);
         camera.aspect = width / height;
         camera.updateProjectionMatrix();
-        softwareController?.resize(width, height, Math.min(window.devicePixelRatio || 1, 2));
+        softwareController?.resize(width, height, Math.min(window.devicePixelRatio || 1, 1));
         syncFallbackView();
       }
 
@@ -560,10 +599,13 @@ import {
 
       const handleContextLost = (event) => {
         event.preventDefault();
+        setSoftwareFallbackActive(true);
         renderStatus = "CONTEXT LOST";
         renderError = "WEBGL CONTEXT LOST";
+        syncFallbackView();
       };
       const handleContextRestored = () => {
+        setSoftwareFallbackActive(false);
         renderStatus = "WEBGL READY";
         renderError = "";
       };
@@ -587,16 +629,22 @@ import {
 
       let frame;
       let renderedFrames = 0;
+      const softwareNeoPhases = Object.create(null);
 
       function renderScene() {
         try {
           renderer.render(scene, camera);
           renderedFrames += 1;
-          if (renderedFrames === 1) renderStatus = "LIVE";
+          if (renderedFrames === 1) {
+            renderStatus = "LIVE";
+            setSoftwareFallbackActive(false);
+          }
         } catch (error) {
+          setSoftwareFallbackActive(true);
           renderStatus = "RENDER ERROR";
           renderError = "ORBITAL DISPLAY OFFLINE";
           console.error("NEO Finder orbital renderer failed to draw", error);
+          syncFallbackView();
           if (frame) cancelAnimationFrame(frame);
         }
       }
@@ -628,25 +676,29 @@ import {
           object.position.set(position.x, position.y, position.z);
           object.rotation.x += object.userData.spin * delta * 60;
           object.rotation.y += object.userData.spin * delta * 72;
+          softwareNeoPhases[object.userData.id] = object.userData.phase;
         });
-        softwareController?.setMotion({
-          moonPhase: moonOrbitPhase,
-          neoPhases: Object.fromEntries(
-            asteroidObjects.map((object) => [object.userData.id, object.userData.phase])
-          ),
-          earthRotation
-        }, zoomScale);
-        softwareController?.render();
+        if (softwareFallbackActive) {
+          softwareController?.setMotion({
+            moonPhase: moonOrbitPhase,
+            neoPhases: softwareNeoPhases,
+            earthRotation
+          }, zoomScale);
+          softwareController?.render();
+        }
         renderScene();
       }
       animate(previousTime);
 
       cleanup = () => {
         cancelAnimationFrame(frame);
+        if (qualityRestoreTimer) window.clearTimeout(qualityRestoreTimer);
         resizeObserver.disconnect();
         canvas.removeEventListener("webglcontextlost", handleContextLost);
         canvas.removeEventListener("webglcontextrestored", handleContextRestored);
         controls.removeEventListener("change", syncFallbackView);
+        controls.removeEventListener("start", handleControlsStart);
+        controls.removeEventListener("end", handleControlsEnd);
         controls.dispose();
         disposeGroup(orbitGroup);
         disposeGroup(asteroidGroup);
@@ -693,6 +745,7 @@ import {
   <canvas
     bind:this={softwareCanvas}
     class="software-canvas"
+    class:softwareIdle={!softwareFallbackActive}
     aria-hidden="true"
     data-renderer="software-3d"
   ></canvas>
@@ -776,6 +829,10 @@ import {
     z-index: 2;
     pointer-events: none;
     image-rendering: auto;
+  }
+
+  .software-canvas.softwareIdle {
+    visibility: hidden;
   }
 
   .scene-vignette {
