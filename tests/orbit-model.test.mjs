@@ -21,6 +21,13 @@ import {
   getFacingNormal,
   projectWorldPoint
 } from "../src/lib/view-model.mjs";
+import {
+  createAsteroidPolyhedron,
+  getWorldSphereNormal,
+  rotateVector,
+  sampleSphereSurface,
+  shadeSurface
+} from "../src/lib/space-raster.mjs";
 
 const nearlyEqual = (actual, expected, tolerance = 1e-6) => {
   assert.ok(Math.abs(actual - expected) <= tolerance, `${actual} is not within ${tolerance} of ${expected}`);
@@ -171,41 +178,101 @@ test("perspective scale makes a nearer body larger than a farther body", () => {
   assert.ok(near.perspectiveScale > far.perspectiveScale);
 });
 
-test("the Svelte scene makes WebGL primary and keeps a failure fallback", async () => {
+test("software sphere rasterization has a curved silhouette and measurable depth", () => {
+  const center = sampleSphereSurface({ x: 0, y: 0, radius: 10 });
+  const edge = sampleSphereSurface({ x: 9.9, y: 0, radius: 10 });
+  const outside = sampleSphereSurface({ x: 10.1, y: 0, radius: 10 });
+
+  assert.ok(center);
+  assert.ok(edge);
+  assert.equal(outside, null);
+  nearlyEqual(center.normal.z, 1);
+  assert.ok(center.depth > edge.depth);
+  assert.ok(edge.normal.z < 0.15);
+  assert.deepEqual(center.uv, { u: 0.5, v: 0.5 });
+});
+
+test("software sphere normals follow the camera around the Earth", () => {
+  const target = { x: 0, y: 0, z: 0 };
+  const frontView = {
+    cameraPosition: getCameraOrbitPosition({ azimuth: 0, polar: Math.PI / 2, distance: 120, target }),
+    target,
+    fovRadians: Math.PI / 4,
+    aspect: 1
+  };
+  const sideView = {
+    ...frontView,
+    cameraPosition: getCameraOrbitPosition({ azimuth: Math.PI / 2, polar: Math.PI / 2, distance: 120, target })
+  };
+  const frontNormal = getWorldSphereNormal({ x: 0, y: 0, radius: 10 }, frontView);
+  const sideNormal = getWorldSphereNormal({ x: 0, y: 0, radius: 10 }, sideView);
+
+  assert.ok(frontNormal.z > 0.99);
+  assert.ok(sideNormal.x > 0.99);
+  assert.ok(shadeSurface(frontNormal, { x: 0, y: 0, z: 1 }) > shadeSurface(sideNormal, { x: 0, y: 0, z: 1 }));
+});
+
+test("partial body rotations keep software texture coordinates finite", () => {
+  const rotated = rotateVector({ x: 0, y: 0, z: 1 }, { y: Math.PI / 2 });
+
+  assert.ok(Object.values(rotated).every(Number.isFinite));
+  nearlyEqual(rotated.x, 1);
+  nearlyEqual(rotated.z, 0);
+});
+
+test("asteroid fallback geometry contains shaded 3D polygon faces", () => {
+  const angular = createAsteroidPolyhedron("angular", 17);
+  const elongated = createAsteroidPolyhedron("elongated", 23);
+
+  assert.ok(angular.faces.length >= 8);
+  assert.ok(elongated.faces.length >= 8);
+  assert.ok(angular.vertices.some((vertex) => Math.abs(vertex.z) > 0.1));
+  assert.ok(elongated.vertices.some((vertex) => Math.abs(vertex.y) > 0.1));
+  assert.notDeepEqual(angular.vertices, elongated.vertices);
+});
+
+test("the Svelte scene uses WebGL plus a compositor-safe 3D renderer", async () => {
   const source = await readFile(new URL("../src/lib/SpaceScene.svelte", import.meta.url), "utf8");
+  const rasterSource = await readFile(new URL("../src/lib/space-raster.mjs", import.meta.url), "utf8");
 
   for (const marker of [
-    'data-fallback-body="moon"',
-    'data-fallback-body="neo"',
-    "fallback-earth",
-    "--fallback-earth-scale",
     "MeshStandardMaterial",
     "alpha: true",
-    "compositor-safe presentation layer",
     "three/addons/controls/OrbitControls.js",
     "const controls = new OrbitControls",
     "controls.target.set(0, 0, 0)",
     "controls.enableDamping = true",
-    "const cameraFar = maxCameraDistance + MOON_ORBIT_RADIUS",
+    "const cameraFar = maxCameraDistance + MOON_ORBIT_RADIUS + EARTH_RADIUS_SCENE * 4",
     "controls.minPolarAngle = Math.PI * 0.05",
     "controls.minDistance",
     "controls.maxDistance",
     "vertexColors: true",
     "getCameraOrbitPosition",
-    "projectWorldPoint",
+    "createSoftwareScene",
+    "createEarthSurfaceMap",
+    "createMoonSurfaceMap",
+    "softwareController.render",
+    "software-canvas",
+    'data-renderer="software-3d"',
     "controls.addEventListener(\"change\"",
-    "--fallback-earth-yaw",
-    "--fallback-body-x",
     "scene-shell::before",
-    "DRAG TO ORBIT"
+    "DRAG TO ORBIT",
+    "animate(previousTime)"
   ]) {
     assert.ok(source.includes(marker), `missing 3D renderer marker: ${marker}`);
   }
 
+  for (const marker of ["sampleSphereSurface", "getWorldSphereNormal", "createAsteroidPolyhedron"]) {
+    assert.ok(rasterSource.includes(marker), `missing software 3D marker: ${marker}`);
+  }
+
   assert.ok(!source.includes("targetCameraDistance"));
   assert.match(source, /\.webgl-canvas\s*\{[\s\S]*?z-index: 3/);
-  assert.match(source, /\.scene-fallback\s*\{[\s\S]*?z-index: 1/);
+  assert.match(source, /\.software-canvas\s*\{[\s\S]*?z-index: 2/);
   assert.match(source, /controls\.dispose\(\)/);
+  assert.ok(!source.includes("fallback-earth"));
+  assert.ok(!source.includes("fallback-moon"));
+  assert.ok(!source.includes("fallback-neo"));
   assert.ok(!source.includes('data-fallback-body="sun"'));
   assert.ok(!source.includes("sunSystem"));
 });

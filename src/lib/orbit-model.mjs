@@ -1,7 +1,7 @@
 // Shared, renderer-independent orbital math.
 //
-// Three.js uses these values for the real scene. The DOM fallback is only a
-// renderer-failure safety net and reuses the same local orbital math.
+// Three.js and the compositor-safe software renderer use the same local
+// orbital math so every renderer preserves the same relative scale.
 
 export const EARTH_RADIUS_SCENE = 12;
 export const EARTH_RADIUS_KM = 6371;

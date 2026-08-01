@@ -75,6 +75,6 @@ test("customisation exposes draft sliders, a live preview, and an explicit save"
   assert.match(page, /SAVE EARTH/);
   assert.match(page, /cancelSettings/);
   assert.match(page, /landmassConfig=\{draftLandmassConfig\}/);
-  assert.match(scene, /generateLandmassMap/);
-  assert.match(scene, /fallbackTexture/);
+  assert.match(scene, /createEarthSurfaceMap/);
+  assert.match(scene, /createSoftwareScene/);
 });

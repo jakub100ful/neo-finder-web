@@ -1,7 +1,6 @@
 <script>
 import { onMount } from "svelte";
 import { getSceneMetrics } from "./neo.js";
-import { generateLandmassMap } from "./landmass.js";
 import {
   EARTH_RADIUS_SCENE,
   MOON_ORBIT_PERIOD_DAYS,
@@ -16,10 +15,12 @@ import {
   getNeoOrbitPosition,
   getZoomScale
 } from "./orbit-model.mjs";
+import { getCameraOrbitPosition } from "./view-model.mjs";
 import {
-  getCameraOrbitPosition,
-  projectWorldPoint
-} from "./view-model.mjs";
+  createEarthSurfaceMap,
+  createMoonSurfaceMap,
+  createSoftwareScene
+} from "./space-raster.mjs";
 
   export let neos = [];
   export let earthTheme = "aqua";
@@ -32,12 +33,12 @@ import {
   export let compact = false;
 
   let canvas;
+  let softwareCanvas;
   let sceneController = null;
+  let softwareController = null;
   let renderError = "";
   let renderStatus = "INITIALISING";
-  let fallbackNeos = [];
-  let fallbackTexture = "";
-  let fallbackMotion = { moonPhase: 0, neoPhases: {} };
+  let earthRotation = 0;
   let fallbackView = {
     cameraPosition: getCameraOrbitPosition({
       azimuth: 0,
@@ -50,8 +51,6 @@ import {
     azimuth: 0,
     polar: Math.acos(8 / Math.sqrt(8 ** 2 + 74 ** 2))
   };
-  $: fallbackMapStyle = fallbackTexture ? `url("${fallbackTexture}")` : "var(--fallback-fluid)";
-
   const THEMES = {
     aqua: {
       emissive: 0x052841,
@@ -81,84 +80,23 @@ import {
 
   let zoomScale = 1;
 
-  function colorToCss(value, fallback = "#8d8aa4") {
-    return typeof value === "number" && Number.isFinite(value)
-      ? `#${value.toString(16).padStart(6, "0")}`
-      : fallback;
+  function getSoftwareNeos(nextNeos = []) {
+    return (nextNeos || []).slice(0, 8).map((neo, index) => ({
+      ...getSceneMetrics(neo, index),
+      id: neo?.id ?? neo?.name ?? `neo-${index}`
+    }));
   }
-
-  $: fallbackNeos = (neos || []).slice(0, 8).map((neo, index) => {
-    const metrics = getSceneMetrics(neo, index);
-    const speed = Math.max(metrics.speed, 0.01);
-    return {
-      id: neo?.id ?? neo?.name ?? `neo-${index}`,
-      // Keep the DOM safety-net asteroids outside the Earth silhouette so a
-      // compositor that drops WebGL still shows the objects in orbit.
-      orbitRadius: Math.round(176 + metrics.radius * 1.8),
-      size: Math.max(9, Math.min(34, Math.round(metrics.size * 3.8))),
-      color: colorToCss(metrics.appearance.materialColor),
-      shape: metrics.appearance.shape,
-      radius: metrics.radius,
-      inclination: metrics.inclination,
-      phase: metrics.phase,
-      duration: (2 * Math.PI / (NEO_ORBIT_PHASE_RATE * speed)).toFixed(2),
-      delay: (-metrics.phase / (NEO_ORBIT_PHASE_RATE * speed)).toFixed(2)
-    };
-  });
-
-  function getFallbackScale(projection) {
-    const cameraDistance = Math.sqrt(
-      fallbackView.cameraPosition.x ** 2 +
-      fallbackView.cameraPosition.y ** 2 +
-      fallbackView.cameraPosition.z ** 2
-    );
-    const depth = Math.max(1, Math.abs(projection?.depth || cameraDistance));
-    return Math.max(0.62, Math.min(1.55, cameraDistance / depth));
-  }
-
-  function getFallbackBodyStyle(projection, baseScale = 1) {
-    const safeProjection = projection || { x: 0.5, y: 0.5, depth: 1 };
-    return [
-      `--fallback-body-x:${(safeProjection.x * 100).toFixed(2)}%`,
-      `--fallback-body-y:${(safeProjection.y * 100).toFixed(2)}%`,
-      `--fallback-body-scale:${(baseScale * getFallbackScale(safeProjection)).toFixed(3)}`,
-      `--fallback-body-depth:${safeProjection.depth.toFixed(2)}`,
-      "visibility:visible"
-    ].join(";");
-  }
-
-  $: fallbackMoonProjection = projectWorldPoint(
-    getMoonRelativePosition(fallbackMotion.moonPhase),
-    fallbackView
-  );
-  $: fallbackDisplayNeos = fallbackNeos.map((neo) => {
-    const phase = fallbackMotion.neoPhases[neo.id] ?? neo.phase;
-    const projection = projectWorldPoint(
-      getNeoOrbitPosition({
-        radius: neo.radius,
-        inclination: neo.inclination
-      }, phase),
-      fallbackView
-    );
-    return { ...neo, projection, phase };
-  });
-  $: fallbackEarthStyle = [
-    `--fallback-earth-scale:${(1 / zoomScale).toFixed(2)}`,
-    `--fallback-earth-yaw:${(-fallbackView.azimuth * 180 / Math.PI).toFixed(2)}deg`,
-    `--fallback-earth-pitch:${((fallbackView.polar - Math.PI / 2) * 180 / Math.PI).toFixed(2)}deg`,
-    `--fallback-earth-map-shift:${(50 + fallbackView.azimuth * 8).toFixed(2)}%`
-  ].join(";");
-  $: fallbackOrbitStyle = [
-    `--fallback-orbit-yaw:${(fallbackView.azimuth * 180 / Math.PI).toFixed(2)}deg`,
-    `--fallback-orbit-pitch:${((fallbackView.polar - Math.PI / 2) * 180 / Math.PI).toFixed(2)}deg`
-  ].join(";");
 
   $: if (sceneController && neos) {
     sceneController.updateNeos(neos);
   }
 
-  $: if (sceneController) {
-    sceneController.updateEarth({
+  $: if (softwareController && neos) {
+    softwareController.updateNeos(getSoftwareNeos(neos));
+  }
+
+  $: if (sceneController || softwareController) {
+    const earthSettings = {
       theme: earthTheme,
       pattern: earthPattern,
       land: landColor,
@@ -166,12 +104,35 @@ import {
       atmosphere: atmosphereColor,
       atmosphereEnabled,
       landmass: landmassConfig
-    });
+    };
+    sceneController?.updateEarth(earthSettings);
+    softwareController?.updateEarth(earthSettings);
   }
 
   onMount(() => {
     let cancelled = false;
     let cleanup = () => {};
+
+    if (softwareCanvas) {
+      softwareController = createSoftwareScene(softwareCanvas);
+      softwareController.resize(
+        Math.max(softwareCanvas.clientWidth, 240),
+        Math.max(softwareCanvas.clientHeight, 240),
+        Math.min(window.devicePixelRatio || 1, 2)
+      );
+      softwareController.setView(fallbackView);
+      softwareController.updateEarth({
+        theme: earthTheme,
+        pattern: earthPattern,
+        land: landColor,
+        fluid: fluidColor,
+        atmosphere: atmosphereColor,
+        atmosphereEnabled,
+        landmass: landmassConfig
+      });
+      softwareController.updateNeos(getSoftwareNeos(neos));
+      softwareController.render();
+    }
 
     Promise.all([
       import("three"),
@@ -244,6 +205,8 @@ import {
           azimuth: controls.getAzimuthalAngle(),
           polar: controls.getPolarAngle()
         };
+        softwareController?.setView(fallbackView);
+        softwareController?.render();
       }
 
       controls.addEventListener("change", syncFallbackView);
@@ -394,111 +357,42 @@ import {
       moonOrbitGroup.add(createOrbitLine(MOON_ORBIT_RADIUS, palette.moonOrbit, 0.12, 0.2));
 
       function createEarthTexture(Engine, land, fluid, config) {
-        const mapCanvas = document.createElement("canvas");
-        mapCanvas.width = 384;
-        mapCanvas.height = 192;
-        const context = mapCanvas.getContext("2d");
-        if (!context) throw new Error("2D canvas context unavailable for Earth texture");
-
-        const map = generateLandmassMap(
-          mapCanvas.width,
-          mapCanvas.height,
-          config
+        const map = createEarthSurfaceMap(
+          384,
+          192,
+          { land, fluid, landmass: config }
         );
-        const landRgb = new Engine.Color(land || "#68df9f");
-        const fluidRgb = new Engine.Color(fluid || "#0c89c7");
-        const image = context.createImageData(map.width, map.height);
-        const shade = (value, brightness) =>
-          Math.max(0, Math.min(255, Math.round(value * 255 * brightness)));
-
-        for (let y = 0; y < map.height; y += 1) {
-          for (let x = 0; x < map.width; x += 1) {
-            const index = y * map.width + x;
-            const offset = index * 4;
-            const isLand = map.mask[index] === 1;
-            const base = isLand ? landRgb : fluidRgb;
-            const brightness = isLand
-              ? 0.82 + map.values[index] * 0.34
-              : 0.78 + map.values[index] * 0.16;
-            image.data[offset] = shade(base.r, brightness);
-            image.data[offset + 1] = shade(base.g, brightness);
-            image.data[offset + 2] = shade(base.b, brightness);
-            image.data[offset + 3] = 255;
-          }
-        }
-
-        context.putImageData(image, 0, 0);
-        const texture = new Engine.CanvasTexture(mapCanvas);
+        const texture = new Engine.DataTexture(
+          map.pixels,
+          map.width,
+          map.height,
+          Engine.RGBAFormat,
+          Engine.UnsignedByteType
+        );
         texture.colorSpace = Engine.SRGBColorSpace;
+        texture.flipY = true;
         texture.wrapS = Engine.RepeatWrapping;
         texture.wrapT = Engine.ClampToEdgeWrapping;
         texture.minFilter = Engine.LinearFilter;
         texture.magFilter = Engine.LinearFilter;
-        fallbackTexture = mapCanvas.toDataURL("image/png");
+        texture.needsUpdate = true;
         return texture;
       }
 
       function createMoonTexture(Engine) {
-        const moonCanvas = document.createElement("canvas");
-        moonCanvas.width = 256;
-        moonCanvas.height = 128;
-        const context = moonCanvas.getContext("2d");
-        if (!context) throw new Error("2D canvas context unavailable for Moon texture");
-        context.fillStyle = "#777784";
-        context.fillRect(0, 0, moonCanvas.width, moonCanvas.height);
-
-        context.fillStyle = "rgba(202, 199, 207, 0.2)";
-        [
-          [0.18, 0.29, 0.18, 0.2],
-          [0.63, 0.66, 0.25, 0.22],
-          [0.82, 0.25, 0.13, 0.13],
-          [0.39, 0.78, 0.19, 0.16]
-        ].forEach(([x, y, width, height]) => {
-          context.beginPath();
-          context.ellipse(
-            x * moonCanvas.width,
-            y * moonCanvas.height,
-            width * moonCanvas.width,
-            height * moonCanvas.height,
-            0,
-            0,
-            Math.PI * 2
-          );
-          context.fill();
-        });
-
-        const craters = [
-          [0.08, 0.2, 0.028], [0.2, 0.52, 0.052], [0.31, 0.19, 0.034],
-          [0.37, 0.53, 0.075], [0.49, 0.31, 0.043], [0.58, 0.84, 0.035],
-          [0.69, 0.42, 0.06], [0.77, 0.78, 0.04], [0.91, 0.56, 0.07],
-          [0.97, 0.15, 0.025], [0.53, 0.08, 0.02]
-        ];
-        craters.forEach(([x, y, radius], index) => {
-          const pixelX = x * moonCanvas.width;
-          const pixelY = y * moonCanvas.height;
-          const pixelRadius = radius * moonCanvas.width;
-          context.fillStyle = index % 2 ? "rgba(46, 46, 59, 0.42)" : "rgba(38, 38, 50, 0.32)";
-          context.beginPath();
-          context.ellipse(pixelX, pixelY, pixelRadius, pixelRadius * 0.72, 0, 0, Math.PI * 2);
-          context.fill();
-          context.strokeStyle = "rgba(211, 208, 215, 0.3)";
-          context.lineWidth = Math.max(1, pixelRadius * 0.14);
-          context.beginPath();
-          context.ellipse(pixelX - pixelRadius * 0.08, pixelY - pixelRadius * 0.06, pixelRadius * 0.78, pixelRadius * 0.55, 0, 0, Math.PI * 2);
-          context.stroke();
-        });
-
-        context.fillStyle = "rgba(240, 238, 235, 0.12)";
-        for (let index = 0; index < 180; index += 1) {
-          const x = (index * 47) % moonCanvas.width;
-          const y = (index * 29) % moonCanvas.height;
-          context.fillRect(x, y, 1, 1);
-        }
-
-        const texture = new Engine.CanvasTexture(moonCanvas);
+        const map = createMoonSurfaceMap(256, 128);
+        const texture = new Engine.DataTexture(
+          map.pixels,
+          map.width,
+          map.height,
+          Engine.RGBAFormat,
+          Engine.UnsignedByteType
+        );
         texture.colorSpace = Engine.SRGBColorSpace;
+        texture.flipY = true;
         texture.minFilter = Engine.NearestFilter;
         texture.magFilter = Engine.NearestFilter;
+        texture.needsUpdate = true;
         return texture;
       }
 
@@ -576,6 +470,7 @@ import {
           const object = new THREE.Group();
           object.add(asteroid, halo);
           object.userData = {
+            id: neo?.id ?? neo?.name ?? `neo-${index}`,
             radius: metrics.radius,
             speed: metrics.speed,
             phase: metrics.phase,
@@ -655,6 +550,7 @@ import {
         renderer.setSize(width, height, false);
         camera.aspect = width / height;
         camera.updateProjectionMatrix();
+        softwareController?.resize(width, height, Math.min(window.devicePixelRatio || 1, 2));
         syncFallbackView();
       }
 
@@ -720,7 +616,8 @@ import {
         moonPivot.rotation.y = moonOrbitPhase;
         applyCamera(delta);
 
-        earth.rotation.y += delta * 0.12;
+        earthRotation += delta * 0.12;
+        earth.rotation.y = earthRotation;
         grid.rotation.y += delta * 0.12;
         atmosphere.rotation.y -= delta * 0.036;
         starField.rotation.y += delta * 0.0072;
@@ -732,15 +629,17 @@ import {
           object.rotation.x += object.userData.spin * delta * 60;
           object.rotation.y += object.userData.spin * delta * 72;
         });
-        fallbackMotion = {
+        softwareController?.setMotion({
           moonPhase: moonOrbitPhase,
           neoPhases: Object.fromEntries(
-            asteroidObjects.map((object, index) => [fallbackNeos[index]?.id, object.userData.phase])
-          )
-        };
+            asteroidObjects.map((object) => [object.userData.id, object.userData.phase])
+          ),
+          earthRotation
+        }, zoomScale);
+        softwareController?.render();
         renderScene();
       }
-      animate();
+      animate(previousTime);
 
       cleanup = () => {
         cancelAnimationFrame(frame);
@@ -766,6 +665,8 @@ import {
         if (moonTexture) moonTexture.dispose();
         renderer.dispose();
         sceneController = null;
+        softwareController?.dispose();
+        softwareController = null;
       };
     }).catch((error) => {
       if (cancelled) return;
@@ -776,6 +677,8 @@ import {
     return () => {
       cancelled = true;
       cleanup();
+      softwareController?.dispose();
+      softwareController = null;
     };
   });
 </script>
@@ -787,44 +690,12 @@ import {
   aria-label="Animated Earth with saved near Earth objects in orbit"
   data-render-status={renderStatus}
 >
-  <div
-    class="scene-fallback"
+  <canvas
+    bind:this={softwareCanvas}
+    class="software-canvas"
     aria-hidden="true"
-    data-fallback-moon="true"
-    data-fallback-neo-count={fallbackNeos.length}
-    style={`--fallback-fluid:${fluidColor};--fallback-land:${landColor};--fallback-atmosphere:${atmosphereColor};--fallback-map:${fallbackMapStyle};${fallbackEarthStyle}`}
-  >
-    <!--
-      This compositor-safe presentation layer mirrors the live Three.js scene
-      for browsers that do not composite canvas pixels into the visible page.
-      The WebGL scene remains the primary renderer in capable browsers.
-    -->
-    <div class="fallback-space-stage" style={fallbackOrbitStyle}>
-      <div class="fallback-moon-orbit" data-fallback-body="moon">
-        <span class="fallback-moon" style={getFallbackBodyStyle(fallbackMoonProjection)}>
-          <span class="fallback-moon-crater fallback-moon-crater-one"></span>
-          <span class="fallback-moon-crater fallback-moon-crater-two"></span>
-          <span class="fallback-body-label">MOON</span>
-        </span>
-      </div>
-      {#each fallbackDisplayNeos as neo (neo.id)}
-        <div
-          class="fallback-neo-orbit"
-          data-fallback-body="neo"
-          data-neo-id={neo.id}
-          style={`--neo-radius:${neo.orbitRadius}px;--neo-size:${neo.size}px;--neo-color:${neo.color};--neo-duration:${neo.duration}s;--neo-delay:${neo.delay}s;`}
-        >
-          <span
-            class={`fallback-neo fallback-neo-${neo.shape}`}
-            style={getFallbackBodyStyle(neo.projection)}
-          ></span>
-        </div>
-      {/each}
-    </div>
-    <div class={`fallback-earth pattern-${earthPattern}`}>
-      <span class="fallback-shine"></span>
-    </div>
-  </div>
+    data-renderer="software-3d"
+  ></canvas>
   <canvas bind:this={canvas} class="webgl-canvas" aria-hidden="true"></canvas>
   <div class="scene-vignette"></div>
   {#if renderError}
@@ -901,233 +772,10 @@ import {
     cursor: grabbing;
   }
 
-  .scene-fallback {
-    position: absolute;
-    inset: 0;
-    z-index: 1;
-    display: grid;
-    place-items: center;
-    perspective: 1100px;
-    transform-style: preserve-3d;
-    pointer-events: none;
-  }
-
-  .fallback-space-stage {
-    position: absolute;
-    inset: 0;
-    transform-style: preserve-3d;
-    pointer-events: none;
-  }
-
-  .fallback-moon-orbit,
-  .fallback-neo-orbit {
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    border: 1px dashed rgba(158, 219, 255, 0.16);
-    border-radius: 50%;
-    pointer-events: none;
-    transform-style: preserve-3d;
-    transform: translate(-50%, -50%) rotateX(var(--fallback-orbit-pitch, 0deg)) rotateY(var(--fallback-orbit-yaw, 0deg)) scale(var(--fallback-earth-scale, 1));
-  }
-
-  .fallback-moon-orbit {
+  .software-canvas {
     z-index: 2;
-    width: min(56%, 430px);
-    aspect-ratio: 1;
-    border-color: rgba(170, 167, 179, 0.26);
-    animation: fallback-moon-orbit 27.32166s linear infinite;
-  }
-
-  .fallback-moon {
-    position: absolute;
-    top: 0;
-    left: 50%;
-    display: block;
-    width: clamp(1rem, 3vw, 1.55rem);
-    aspect-ratio: 1;
-    transform: translate(-50%, -50%) scale(var(--fallback-body-scale, 1));
-    overflow: hidden;
-    border: 1px solid rgba(240, 238, 235, 0.72);
-    border-radius: 50%;
-    background:
-      radial-gradient(circle at 26% 34%, rgba(42, 42, 53, 0.62) 0 10%, transparent 11%),
-      radial-gradient(circle at 68% 62%, rgba(54, 53, 66, 0.58) 0 15%, transparent 16%),
-      radial-gradient(circle at 58% 21%, rgba(235, 232, 226, 0.5) 0 7%, transparent 8%),
-      radial-gradient(ellipse at 30% 25%, #e5e0e4 0 8%, #aaa7b3 45%, #625f70 100%);
-    box-shadow:
-      inset -0.28rem -0.2rem 0.35rem rgba(26, 25, 38, 0.55),
-      inset 0.16rem 0.12rem 0.2rem rgba(255, 255, 255, 0.38),
-      0 0 0 0.18rem rgba(170, 167, 179, 0.12),
-      0 0 0.8rem rgba(209, 205, 222, 0.48);
-    transform: translate(-50%, -50%) scale(var(--fallback-body-scale, 1)) rotateY(-18deg);
-  }
-
-  .fallback-moon::after {
-    content: "";
-    position: absolute;
-    inset: 0;
-    border-radius: 50%;
-    background: radial-gradient(ellipse at 73% 56%, transparent 0 42%, rgba(22, 22, 33, 0.38) 82%, rgba(22, 22, 33, 0.7) 100%);
     pointer-events: none;
-  }
-
-  .fallback-moon .fallback-body-label {
-    z-index: 1;
-  }
-
-  .fallback-moon-crater {
-    position: absolute;
-    display: block;
-    border: 1px solid rgba(50, 49, 63, 0.42);
-    border-radius: 50%;
-  }
-
-  .fallback-moon-crater-one {
-    top: 54%;
-    left: 16%;
-    width: 24%;
-    height: 20%;
-  }
-
-  .fallback-moon-crater-two {
-    top: 14%;
-    left: 62%;
-    width: 18%;
-    height: 15%;
-  }
-
-  .fallback-body-label {
-    position: absolute;
-    top: calc(100% + 0.4rem);
-    left: 50%;
-    transform: translateX(-50%);
-    color: rgba(224, 223, 247, 0.62);
-    font-size: 0.42rem;
-    letter-spacing: 0.1em;
-    white-space: nowrap;
-  }
-
-  .fallback-neo-orbit {
-    z-index: 5;
-    width: calc(var(--neo-radius) * 2);
-    height: calc(var(--neo-radius) * 2);
-    border-color: color-mix(in srgb, var(--neo-color) 28%, transparent);
-    animation: fallback-neo-orbit var(--neo-duration) linear infinite;
-    animation-delay: var(--neo-delay);
-  }
-
-  .fallback-neo {
-    position: absolute;
-    top: 0;
-    left: 50%;
-    display: block;
-    width: var(--neo-size);
-    height: var(--neo-size);
-    transform: translate(-50%, -50%);
-    background: radial-gradient(circle at 30% 24%, color-mix(in srgb, white 46%, var(--neo-color)), var(--neo-color) 52%, color-mix(in srgb, black 42%, var(--neo-color)) 100%);
-    box-shadow:
-      inset -0.14rem -0.12rem 0.18rem color-mix(in srgb, black 48%, transparent),
-      inset 0.08rem 0.06rem 0.12rem color-mix(in srgb, white 40%, transparent),
-      0 0 0 0.12rem color-mix(in srgb, var(--neo-color) 32%, transparent),
-      0 0 0.7rem color-mix(in srgb, var(--neo-color) 60%, transparent);
-    transform: translate(-50%, -50%) scale(var(--fallback-body-scale, 1)) rotateY(-20deg) rotateX(12deg);
-  }
-
-  .fallback-neo-angular {
-    clip-path: polygon(50% 0, 100% 38%, 76% 100%, 22% 82%, 0 36%);
-  }
-
-  .fallback-neo-metallic {
-    border-radius: 38% 62% 42% 58%;
-    transform: translate(-50%, -50%) scale(var(--fallback-body-scale, 1)) rotateY(-20deg) rotateX(12deg) rotate(24deg) skewX(-8deg);
-  }
-
-  .fallback-neo-elongated {
-    width: calc(var(--neo-size) * 1.55);
-    border-radius: 56% 44% 50% 42%;
-    transform: translate(-50%, -50%) scale(var(--fallback-body-scale, 1)) rotateY(-20deg) rotateX(12deg) rotate(-18deg);
-  }
-
-  .fallback-neo-cratered {
-    border-radius: 48% 52% 38% 62%;
-    background:
-      radial-gradient(circle at 32% 38%, rgba(16, 16, 27, 0.56) 0 15%, transparent 16%),
-      radial-gradient(circle at 68% 64%, rgba(16, 16, 27, 0.42) 0 13%, transparent 14%),
-      var(--neo-color);
-  }
-
-  @keyframes fallback-moon-orbit {
-    to {
-      transform: translate(-50%, -50%) rotateX(var(--fallback-orbit-pitch, 0deg)) rotateY(var(--fallback-orbit-yaw, 0deg)) scale(var(--fallback-earth-scale, 1)) rotate(360deg);
-    }
-  }
-
-  @keyframes fallback-neo-orbit {
-    to {
-      transform: translate(-50%, -50%) rotateX(var(--fallback-orbit-pitch, 0deg)) rotateY(var(--fallback-orbit-yaw, 0deg)) scale(var(--fallback-earth-scale, 1)) rotate(360deg);
-    }
-  }
-
-  .fallback-earth {
-    position: relative;
-    z-index: 4;
-    width: min(44%, 320px);
-    min-width: 180px;
-    aspect-ratio: 1;
-    overflow: hidden;
-    border: 2px solid color-mix(in srgb, var(--fallback-atmosphere) 72%, transparent);
-    border-radius: 50%;
-    background:
-      radial-gradient(ellipse at 28% 23%, rgba(255, 255, 255, 0.56) 0 7%, transparent 20%),
-      radial-gradient(ellipse at 37% 35%, transparent 0 44%, rgba(0, 0, 0, 0.14) 63%, rgba(0, 0, 0, 0.68) 100%),
-      var(--fallback-map);
-    background-position: center, center, var(--fallback-earth-map-shift, 50%) center;
-    background-size: auto, auto, cover;
-    box-shadow:
-      0 0 0 0.35rem color-mix(in srgb, var(--fallback-atmosphere) 20%, transparent),
-      0 0 2.2rem color-mix(in srgb, var(--fallback-atmosphere) 62%, transparent),
-      inset -1.35rem -0.9rem 1.7rem rgba(3, 5, 22, 0.66),
-      inset 0.55rem 0.4rem 1.1rem rgba(255, 255, 255, 0.2);
-    transform: scale(var(--fallback-earth-scale, 1)) rotateY(var(--fallback-earth-yaw, -12deg)) rotateX(calc(7deg + var(--fallback-earth-pitch, 0deg)));
-    transform-style: preserve-3d;
-    backface-visibility: hidden;
-    will-change: transform;
-  }
-
-  .fallback-earth::before {
-    content: "";
-    position: absolute;
-    inset: -2%;
-    z-index: 2;
-    border-radius: 50%;
-    background: radial-gradient(ellipse at 30% 23%, rgba(220, 250, 255, 0.22), transparent 42%);
-    opacity: 0.24;
-    mix-blend-mode: screen;
-    transform: rotateY(12deg) scaleX(0.82);
-    pointer-events: none;
-  }
-
-  .fallback-earth::after {
-    content: "";
-    position: absolute;
-    inset: 0;
-    z-index: 3;
-    border-radius: 50%;
-    background: radial-gradient(ellipse at 72% 54%, transparent 0 42%, rgba(2, 4, 20, 0.34) 73%, rgba(2, 4, 20, 0.76) 100%);
-    pointer-events: none;
-  }
-
-  .fallback-shine {
-    position: absolute;
-    inset: 7% 10% auto auto;
-    width: 28%;
-    height: 12%;
-    border-radius: 50%;
-    z-index: 4;
-    background: linear-gradient(110deg, rgba(255, 255, 255, 0.35), rgba(255, 255, 255, 0));
-    filter: blur(0.2rem);
-    transform: rotate(-22deg);
+    image-rendering: auto;
   }
 
   .scene-vignette {
