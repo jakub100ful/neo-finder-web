@@ -16,6 +16,11 @@ import {
   getZoomBounds,
   getZoomScale
 } from "../src/lib/orbit-model.mjs";
+import {
+  getCameraOrbitPosition,
+  getFacingNormal,
+  projectWorldPoint
+} from "../src/lib/view-model.mjs";
 
 const nearlyEqual = (actual, expected, tolerance = 1e-6) => {
   assert.ok(Math.abs(actual - expected) <= tolerance, `${actual} is not within ${tolerance} of ${expected}`);
@@ -81,6 +86,91 @@ test("zoom is bounded and reports a scale the renderer can use", () => {
   assert.equal(getZoomScale(bounds.max, defaultDistance), Number(ZOOM_MAX_MULTIPLIER.toFixed(1)));
 });
 
+test("camera orbit exposes a different side of the Earth without moving its target", () => {
+  const target = { x: 0, y: 0, z: 0 };
+  const frontView = {
+    cameraPosition: getCameraOrbitPosition({
+      azimuth: 0,
+      polar: Math.PI / 2,
+      distance: 120,
+      target
+    }),
+    target,
+    fovRadians: Math.PI / 4,
+    aspect: 1
+  };
+  const sideView = {
+    ...frontView,
+    cameraPosition: getCameraOrbitPosition({
+      azimuth: Math.PI / 2,
+      polar: Math.PI / 2,
+      distance: 120,
+      target
+    })
+  };
+
+  const frontEarth = projectWorldPoint(target, frontView);
+  const sideEarth = projectWorldPoint(target, sideView);
+  assert.equal(frontEarth.x, 0.5);
+  assert.equal(frontEarth.y, 0.5);
+  assert.equal(sideEarth.x, 0.5);
+  assert.equal(sideEarth.y, 0.5);
+  assert.notDeepEqual(
+    getFacingNormal(frontView.cameraPosition, target),
+    getFacingNormal(sideView.cameraPosition, target)
+  );
+});
+
+test("camera projection changes orbital body screen position and depth", () => {
+  const target = { x: 0, y: 0, z: 0 };
+  const body = { x: 42, y: 8, z: 18 };
+  const frontView = {
+    cameraPosition: getCameraOrbitPosition({
+      azimuth: 0,
+      polar: Math.PI / 2,
+      distance: 180,
+      target
+    }),
+    target,
+    fovRadians: Math.PI / 4,
+    aspect: 1.6
+  };
+  const sideView = {
+    ...frontView,
+    cameraPosition: getCameraOrbitPosition({
+      azimuth: Math.PI / 2,
+      polar: Math.PI / 2,
+      distance: 180,
+      target
+    })
+  };
+  const frontProjection = projectWorldPoint(body, frontView);
+  const sideProjection = projectWorldPoint(body, sideView);
+
+  assert.notEqual(frontProjection.x, sideProjection.x);
+  assert.notEqual(frontProjection.y, sideProjection.y);
+  assert.notEqual(frontProjection.depth, sideProjection.depth);
+  assert.equal(frontProjection.visible, true);
+  assert.equal(sideProjection.visible, true);
+});
+
+test("perspective scale makes a nearer body larger than a farther body", () => {
+  const target = { x: 0, y: 0, z: 0 };
+  const view = {
+    cameraPosition: { x: 0, y: 0, z: 200 },
+    target,
+    fovRadians: Math.PI / 4,
+    aspect: 1
+  };
+
+  const near = projectWorldPoint({ x: 20, y: 0, z: 80 }, view);
+  const far = projectWorldPoint({ x: 20, y: 0, z: -40 }, view);
+
+  assert.ok(near.visible);
+  assert.ok(far.visible);
+  assert.ok(near.perspectiveScale > far.perspectiveScale);
+});
+
 test("the Svelte scene makes WebGL primary and keeps a failure fallback", async () => {
   const source = await readFile(new URL("../src/lib/SpaceScene.svelte", import.meta.url), "utf8");
 
@@ -90,12 +180,32 @@ test("the Svelte scene makes WebGL primary and keeps a failure fallback", async 
     "fallback-earth",
     "--fallback-earth-scale",
     "MeshStandardMaterial",
-    "alpha: false",
-    "compositor-safe presentation layer"
+    "alpha: true",
+    "compositor-safe presentation layer",
+    "three/addons/controls/OrbitControls.js",
+    "const controls = new OrbitControls",
+    "controls.target.set(0, 0, 0)",
+    "controls.enableDamping = true",
+    "const cameraFar = maxCameraDistance + MOON_ORBIT_RADIUS",
+    "controls.minPolarAngle = Math.PI * 0.05",
+    "controls.minDistance",
+    "controls.maxDistance",
+    "vertexColors: true",
+    "getCameraOrbitPosition",
+    "projectWorldPoint",
+    "controls.addEventListener(\"change\"",
+    "--fallback-earth-yaw",
+    "--fallback-body-x",
+    "scene-shell::before",
+    "DRAG TO ORBIT"
   ]) {
     assert.ok(source.includes(marker), `missing 3D renderer marker: ${marker}`);
   }
 
+  assert.ok(!source.includes("targetCameraDistance"));
+  assert.match(source, /\.webgl-canvas\s*\{[\s\S]*?z-index: 3/);
+  assert.match(source, /\.scene-fallback\s*\{[\s\S]*?z-index: 1/);
+  assert.match(source, /controls\.dispose\(\)/);
   assert.ok(!source.includes('data-fallback-body="sun"'));
   assert.ok(!source.includes("sunSystem"));
 });

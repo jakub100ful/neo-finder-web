@@ -2,17 +2,24 @@
 import { onMount } from "svelte";
 import { getSceneMetrics } from "./neo.js";
 import { generateLandmassMap } from "./landmass.js";
-  import {
-    EARTH_RADIUS_SCENE,
-    MOON_ORBIT_PERIOD_DAYS,
-    MOON_ORBIT_RADIUS,
-    MOON_RADIUS_SCENE,
-    NEO_ORBIT_PHASE_RATE,
-    SIMULATED_DAYS_PER_SECOND,
-    clampCameraDistance,
-    getNeoOrbitPosition,
-    getZoomScale
-  } from "./orbit-model.mjs";
+import {
+  EARTH_RADIUS_SCENE,
+  MOON_ORBIT_PERIOD_DAYS,
+  MOON_ORBIT_RADIUS,
+  MOON_RADIUS_SCENE,
+  NEO_ORBIT_PHASE_RATE,
+  SIMULATED_DAYS_PER_SECOND,
+  ZOOM_MAX_MULTIPLIER,
+  ZOOM_MIN_MULTIPLIER,
+  clampCameraDistance,
+  getMoonRelativePosition,
+  getNeoOrbitPosition,
+  getZoomScale
+} from "./orbit-model.mjs";
+import {
+  getCameraOrbitPosition,
+  projectWorldPoint
+} from "./view-model.mjs";
 
   export let neos = [];
   export let earthTheme = "aqua";
@@ -30,6 +37,19 @@ import { generateLandmassMap } from "./landmass.js";
   let renderStatus = "INITIALISING";
   let fallbackNeos = [];
   let fallbackTexture = "";
+  let fallbackMotion = { moonPhase: 0, neoPhases: {} };
+  let fallbackView = {
+    cameraPosition: getCameraOrbitPosition({
+      azimuth: 0,
+      polar: Math.acos(8 / Math.sqrt(8 ** 2 + 74 ** 2)),
+      distance: Math.sqrt(8 ** 2 + 74 ** 2)
+    }),
+    target: { x: 0, y: 0, z: 0 },
+    fovRadians: (33 * Math.PI) / 180,
+    aspect: 1,
+    azimuth: 0,
+    polar: Math.acos(8 / Math.sqrt(8 ** 2 + 74 ** 2))
+  };
   $: fallbackMapStyle = fallbackTexture ? `url("${fallbackTexture}")` : "var(--fallback-fluid)";
 
   const THEMES = {
@@ -78,10 +98,60 @@ import { generateLandmassMap } from "./landmass.js";
       size: Math.max(9, Math.min(34, Math.round(metrics.size * 3.8))),
       color: colorToCss(metrics.appearance.materialColor),
       shape: metrics.appearance.shape,
+      radius: metrics.radius,
+      inclination: metrics.inclination,
+      phase: metrics.phase,
       duration: (2 * Math.PI / (NEO_ORBIT_PHASE_RATE * speed)).toFixed(2),
       delay: (-metrics.phase / (NEO_ORBIT_PHASE_RATE * speed)).toFixed(2)
     };
   });
+
+  function getFallbackScale(projection) {
+    const cameraDistance = Math.sqrt(
+      fallbackView.cameraPosition.x ** 2 +
+      fallbackView.cameraPosition.y ** 2 +
+      fallbackView.cameraPosition.z ** 2
+    );
+    const depth = Math.max(1, Math.abs(projection?.depth || cameraDistance));
+    return Math.max(0.62, Math.min(1.55, cameraDistance / depth));
+  }
+
+  function getFallbackBodyStyle(projection, baseScale = 1) {
+    const safeProjection = projection || { x: 0.5, y: 0.5, depth: 1 };
+    return [
+      `--fallback-body-x:${(safeProjection.x * 100).toFixed(2)}%`,
+      `--fallback-body-y:${(safeProjection.y * 100).toFixed(2)}%`,
+      `--fallback-body-scale:${(baseScale * getFallbackScale(safeProjection)).toFixed(3)}`,
+      `--fallback-body-depth:${safeProjection.depth.toFixed(2)}`,
+      "visibility:visible"
+    ].join(";");
+  }
+
+  $: fallbackMoonProjection = projectWorldPoint(
+    getMoonRelativePosition(fallbackMotion.moonPhase),
+    fallbackView
+  );
+  $: fallbackDisplayNeos = fallbackNeos.map((neo) => {
+    const phase = fallbackMotion.neoPhases[neo.id] ?? neo.phase;
+    const projection = projectWorldPoint(
+      getNeoOrbitPosition({
+        radius: neo.radius,
+        inclination: neo.inclination
+      }, phase),
+      fallbackView
+    );
+    return { ...neo, projection, phase };
+  });
+  $: fallbackEarthStyle = [
+    `--fallback-earth-scale:${(1 / zoomScale).toFixed(2)}`,
+    `--fallback-earth-yaw:${(-fallbackView.azimuth * 180 / Math.PI).toFixed(2)}deg`,
+    `--fallback-earth-pitch:${((fallbackView.polar - Math.PI / 2) * 180 / Math.PI).toFixed(2)}deg`,
+    `--fallback-earth-map-shift:${(50 + fallbackView.azimuth * 8).toFixed(2)}%`
+  ].join(";");
+  $: fallbackOrbitStyle = [
+    `--fallback-orbit-yaw:${(fallbackView.azimuth * 180 / Math.PI).toFixed(2)}deg`,
+    `--fallback-orbit-pitch:${((fallbackView.polar - Math.PI / 2) * 180 / Math.PI).toFixed(2)}deg`
+  ].join(";");
 
   $: if (sceneController && neos) {
     sceneController.updateNeos(neos);
@@ -103,77 +173,138 @@ import { generateLandmassMap } from "./landmass.js";
     let cancelled = false;
     let cleanup = () => {};
 
-    import("three").then((THREE) => {
+    Promise.all([
+      import("three"),
+      import("three/addons/controls/OrbitControls.js")
+    ]).then(([THREE, { OrbitControls }]) => {
       if (cancelled || !canvas) return;
 
       let palette = THEMES[earthTheme] || THEMES.aqua;
       const scene = new THREE.Scene();
       // The Sun is intentionally out of this product view for now. Keep the
       // frustum tight enough for the Earth, Moon and NEO presentation rig.
-      const camera = new THREE.PerspectiveCamera(33, 1, 0.1, MOON_ORBIT_RADIUS * 1.6);
-      const renderer = new THREE.WebGLRenderer({
-        canvas,
-        // An opaque drawing buffer is important here: it makes the WebGL
-        // canvas the authoritative visual surface instead of relying on a
-        // transparent compositor layer.
-        alpha: false,
-        antialias: false,
-        powerPreference: "high-performance"
-      });
-      renderer.debug.checkShaderErrors = true;
-      renderer.setClearColor(0x050612, 1);
-      renderStatus = "WEBGL READY";
-      renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
-      renderer.outputColorSpace = THREE.SRGBColorSpace;
       const cameraDirection = new THREE.Vector3(0, 8, 74).normalize();
       const defaultCameraDistance = Math.sqrt(8 * 8 + 74 * 74);
-      const maxCameraDistance = defaultCameraDistance * 10;
+      const maxCameraDistance = defaultCameraDistance * ZOOM_MAX_MULTIPLIER;
       const defaultFov = 33;
       const maxFov = 92;
       let cameraDistance = defaultCameraDistance;
-      let targetCameraDistance = defaultCameraDistance;
+      const cameraFar = maxCameraDistance + MOON_ORBIT_RADIUS + EARTH_RADIUS_SCENE * 4;
+      const camera = new THREE.PerspectiveCamera(33, 1, 0.1, cameraFar);
+      const renderer = new THREE.WebGLRenderer({
+        canvas,
+        // Keep the space backdrop compositable with the CSS safety layer.
+        // Supported browsers still see the Three.js scene above it; browsers
+        // that drop WebGL pixels retain a visible orbital presentation.
+        alpha: true,
+        antialias: true,
+        powerPreference: "high-performance"
+      });
+      renderer.debug.checkShaderErrors = true;
+      renderer.setClearColor(0x050612, 0);
+      renderStatus = "WEBGL READY";
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+      renderer.outputColorSpace = THREE.SRGBColorSpace;
+      camera.position.copy(cameraDirection).multiplyScalar(defaultCameraDistance);
+      camera.lookAt(0, 0, 0);
+
+      const controls = new OrbitControls(camera, renderer.domElement);
+      controls.target.set(0, 0, 0);
+      controls.enableDamping = true;
+      controls.dampingFactor = 0.08;
+      controls.enablePan = false;
+      controls.enableRotate = true;
+      controls.screenSpacePanning = false;
+      controls.rotateSpeed = 0.58;
+      controls.zoomSpeed = 0.78;
+      controls.minDistance = defaultCameraDistance * ZOOM_MIN_MULTIPLIER;
+      controls.maxDistance = maxCameraDistance;
+      controls.minPolarAngle = Math.PI * 0.05;
+      controls.maxPolarAngle = Math.PI * 0.95;
+      controls.update();
+
+      function syncFallbackView() {
+        const width = Math.max(canvas.clientWidth, 240);
+        const height = Math.max(canvas.clientHeight, 240);
+        const target = {
+          x: controls.target.x,
+          y: controls.target.y,
+          z: controls.target.z
+        };
+        const cameraPosition = {
+          x: camera.position.x,
+          y: camera.position.y,
+          z: camera.position.z
+        };
+        fallbackView = {
+          cameraPosition,
+          target,
+          fovRadians: (camera.fov * Math.PI) / 180,
+          aspect: width / height,
+          azimuth: controls.getAzimuthalAngle(),
+          polar: controls.getPolarAngle()
+        };
+      }
+
+      controls.addEventListener("change", syncFallbackView);
+      syncFallbackView();
 
       const earthFrame = new THREE.Group();
       scene.add(earthFrame);
-      const ambient = new THREE.AmbientLight(0x7ca6ff, 1.4);
-      const keyLight = new THREE.PointLight(0xffffff, 2.4, 160);
+      const ambient = new THREE.AmbientLight(0x7ca6ff, 0.42);
+      const hemisphere = new THREE.HemisphereLight(0x8abaff, 0x02030b, 0.48);
+      const keyLight = new THREE.PointLight(0xffffff, 3.2, 160);
       keyLight.position.set(-34, 24, 42);
       const rimLight = new THREE.DirectionalLight(0x6a8bff, 0.65);
       rimLight.position.set(30, -18, -42);
-      scene.add(ambient, rimLight);
+      scene.add(ambient, hemisphere, rimLight);
       earthFrame.add(keyLight);
 
       const starPositions = [];
-      for (let index = 0; index < 460; index += 1) {
-        const radius = 44 + Math.random() * 60;
-        const theta = Math.random() * Math.PI * 2;
-        const height = (Math.random() - 0.5) * 92;
+      const starColors = [];
+      let starSeed = 0x9e3779b9;
+      const nextStarRandom = () => {
+        starSeed = (starSeed * 1664525 + 1013904223) >>> 0;
+        return starSeed / 4294967296;
+      };
+      for (let index = 0; index < 720; index += 1) {
+        const radius = 260 + nextStarRandom() * 360;
+        const theta = nextStarRandom() * Math.PI * 2;
+        const phi = Math.acos(2 * nextStarRandom() - 1);
+        const sinPhi = Math.sin(phi);
         starPositions.push(
-          Math.cos(theta) * radius,
-          height,
-          Math.sin(theta) * radius
+          sinPhi * Math.cos(theta) * radius,
+          Math.cos(phi) * radius,
+          sinPhi * Math.sin(theta) * radius
         );
+        const warmth = nextStarRandom();
+        starColors.push(0.72 + warmth * 0.28, 0.78 + (1 - warmth) * 0.22, 0.96 + nextStarRandom() * 0.04);
       }
       const starGeometry = new THREE.BufferGeometry();
       starGeometry.setAttribute(
         "position",
         new THREE.Float32BufferAttribute(starPositions, 3)
       );
+      starGeometry.setAttribute("color", new THREE.Float32BufferAttribute(starColors, 3));
       const starMaterial = new THREE.PointsMaterial({
-        color: 0x9edbff,
-        size: 0.28,
+        size: 1.35,
+        vertexColors: true,
         transparent: true,
-        opacity: 0.75,
-        sizeAttenuation: true
+        opacity: 0.86,
+        sizeAttenuation: false,
+        depthWrite: false
       });
       const stars = new THREE.Points(starGeometry, starMaterial);
-      earthFrame.add(stars);
+      stars.frustumCulled = false;
+      const starField = new THREE.Group();
+      starField.add(stars);
+      scene.add(starField);
 
       const earthGroup = new THREE.Group();
       const earthMaterial = new THREE.MeshStandardMaterial({
         color: 0xffffff,
         emissive: palette.emissive,
-        emissiveIntensity: 0.34,
+        emissiveIntensity: 0.14,
         roughness: 0.84,
         metalness: 0.02
       });
@@ -185,7 +316,7 @@ import { generateLandmassMap } from "./landmass.js";
       );
       earthMaterial.map = earthTexture;
       const earth = new THREE.Mesh(
-        new THREE.SphereGeometry(EARTH_RADIUS_SCENE, 24, 16),
+        new THREE.SphereGeometry(EARTH_RADIUS_SCENE, 48, 32),
         earthMaterial
       );
       earthGroup.add(earth);
@@ -196,7 +327,7 @@ import { generateLandmassMap } from "./landmass.js";
         opacity: 0.3
       });
       const grid = new THREE.LineSegments(
-        new THREE.WireframeGeometry(new THREE.SphereGeometry(EARTH_RADIUS_SCENE * 1.01, 12, 8)),
+        new THREE.WireframeGeometry(new THREE.SphereGeometry(EARTH_RADIUS_SCENE * 1.01, 24, 16)),
         gridMaterial
       );
       earthGroup.add(grid);
@@ -209,7 +340,7 @@ import { generateLandmassMap } from "./landmass.js";
         blending: THREE.AdditiveBlending
       });
       const atmosphere = new THREE.Mesh(
-        new THREE.SphereGeometry(EARTH_RADIUS_SCENE * 1.067, 20, 12),
+        new THREE.SphereGeometry(EARTH_RADIUS_SCENE * 1.067, 32, 20),
         atmosphereMaterial
       );
       atmosphere.visible = atmosphereEnabled;
@@ -221,11 +352,10 @@ import { generateLandmassMap } from "./landmass.js";
       const moonMaterial = new THREE.MeshStandardMaterial({
         color: 0xaaa7b3,
         map: moonTexture,
-        roughness: 1,
-        flatShading: true
+        roughness: 1
       });
       const moon = new THREE.Mesh(
-        new THREE.SphereGeometry(MOON_RADIUS_SCENE, 16, 10),
+        new THREE.SphereGeometry(MOON_RADIUS_SCENE, 24, 16),
         moonMaterial
       );
       moon.position.set(MOON_ORBIT_RADIUS, 0, 0);
@@ -486,34 +616,37 @@ import { generateLandmassMap } from "./landmass.js";
       }
 
       function setTargetCameraDistance(nextDistance) {
-        targetCameraDistance = clampCameraDistance(nextDistance, defaultCameraDistance);
-        zoomScale = getZoomScale(targetCameraDistance, defaultCameraDistance);
+        const nextCameraDistance = clampCameraDistance(nextDistance, defaultCameraDistance);
+        const offset = camera.position.clone().sub(controls.target);
+        if (offset.lengthSq() === 0) return;
+        offset.setLength(nextCameraDistance);
+        camera.position.copy(controls.target).add(offset);
+        controls.update();
+        applyCamera();
       }
 
       function zoomBy(direction) {
         if (!direction) return;
         setTargetCameraDistance(
-          targetCameraDistance * (direction > 0 ? 0.88 : 1.12)
+          controls.getDistance() * (direction > 0 ? 0.88 : 1.12)
         );
       }
 
-      function handleWheel(event) {
-        event.preventDefault();
-        zoomBy(event.deltaY > 0 ? -1 : 1);
-      }
-
-      function applyCamera(delta) {
-        cameraDistance += (targetCameraDistance - cameraDistance) * Math.min(1, delta * 8);
+      function applyCamera() {
+        controls.update();
+        cameraDistance = clampCameraDistance(controls.getDistance(), defaultCameraDistance);
         const zoomProgress = Math.max(
           0,
           (cameraDistance - defaultCameraDistance) /
             (maxCameraDistance - defaultCameraDistance)
         );
-        camera.fov = defaultFov + (maxFov - defaultFov) * zoomProgress;
-        camera.position
-          .copy(cameraDirection)
-          .multiplyScalar(cameraDistance);
-        camera.lookAt(0, 0, 0);
+        const nextFov = defaultFov + (maxFov - defaultFov) * zoomProgress;
+        if (Math.abs(camera.fov - nextFov) > 0.01) {
+          camera.fov = nextFov;
+          camera.updateProjectionMatrix();
+        }
+        zoomScale = getZoomScale(cameraDistance, defaultCameraDistance);
+        syncFallbackView();
       }
 
       function resize() {
@@ -522,6 +655,7 @@ import { generateLandmassMap } from "./landmass.js";
         renderer.setSize(width, height, false);
         camera.aspect = width / height;
         camera.updateProjectionMatrix();
+        syncFallbackView();
       }
 
       const resizeObserver = new ResizeObserver(resize);
@@ -539,7 +673,6 @@ import { generateLandmassMap } from "./landmass.js";
       };
       canvas.addEventListener("webglcontextlost", handleContextLost, false);
       canvas.addEventListener("webglcontextrestored", handleContextRestored, false);
-      canvas.addEventListener("wheel", handleWheel, { passive: false });
       sceneController = { updateNeos, updateEarth, zoomBy };
       updateNeos(neos);
       updateEarth({
@@ -554,7 +687,7 @@ import { generateLandmassMap } from "./landmass.js";
 
       let moonOrbitPhase = 0;
       let previousTime = performance.now();
-      applyCamera(1 / 60);
+      applyCamera();
 
       let frame;
       let renderedFrames = 0;
@@ -590,7 +723,7 @@ import { generateLandmassMap } from "./landmass.js";
         earth.rotation.y += delta * 0.12;
         grid.rotation.y += delta * 0.12;
         atmosphere.rotation.y -= delta * 0.036;
-        stars.rotation.y += delta * 0.0072;
+        starField.rotation.y += delta * 0.0072;
 
         asteroidObjects.forEach((object) => {
           object.userData.phase += delta * NEO_ORBIT_PHASE_RATE * object.userData.speed;
@@ -599,6 +732,12 @@ import { generateLandmassMap } from "./landmass.js";
           object.rotation.x += object.userData.spin * delta * 60;
           object.rotation.y += object.userData.spin * delta * 72;
         });
+        fallbackMotion = {
+          moonPhase: moonOrbitPhase,
+          neoPhases: Object.fromEntries(
+            asteroidObjects.map((object, index) => [fallbackNeos[index]?.id, object.userData.phase])
+          )
+        };
         renderScene();
       }
       animate();
@@ -608,7 +747,8 @@ import { generateLandmassMap } from "./landmass.js";
         resizeObserver.disconnect();
         canvas.removeEventListener("webglcontextlost", handleContextLost);
         canvas.removeEventListener("webglcontextrestored", handleContextRestored);
-        canvas.removeEventListener("wheel", handleWheel);
+        controls.removeEventListener("change", syncFallbackView);
+        controls.dispose();
         disposeGroup(orbitGroup);
         disposeGroup(asteroidGroup);
         disposeGroup(moonOrbitGroup);
@@ -652,30 +792,35 @@ import { generateLandmassMap } from "./landmass.js";
     aria-hidden="true"
     data-fallback-moon="true"
     data-fallback-neo-count={fallbackNeos.length}
-    style={`--fallback-fluid:${fluidColor};--fallback-land:${landColor};--fallback-atmosphere:${atmosphereColor};--fallback-map:${fallbackMapStyle};--fallback-earth-scale:${(1 / zoomScale).toFixed(2)};`}
+    style={`--fallback-fluid:${fluidColor};--fallback-land:${landColor};--fallback-atmosphere:${atmosphereColor};--fallback-map:${fallbackMapStyle};${fallbackEarthStyle}`}
   >
     <!--
       This compositor-safe presentation layer mirrors the live Three.js scene
       for browsers that do not composite canvas pixels into the visible page.
       The WebGL scene remains the primary renderer in capable browsers.
     -->
-    <div class="fallback-moon-orbit" data-fallback-body="moon">
-      <span class="fallback-moon">
-        <span class="fallback-moon-crater fallback-moon-crater-one"></span>
-        <span class="fallback-moon-crater fallback-moon-crater-two"></span>
-        <span class="fallback-body-label">MOON</span>
-      </span>
-    </div>
-    {#each fallbackNeos as neo (neo.id)}
-      <div
-        class="fallback-neo-orbit"
-        data-fallback-body="neo"
-        data-neo-id={neo.id}
-        style={`--neo-radius:${neo.orbitRadius}px;--neo-size:${neo.size}px;--neo-color:${neo.color};--neo-duration:${neo.duration}s;--neo-delay:${neo.delay}s;`}
-      >
-        <span class={`fallback-neo fallback-neo-${neo.shape}`}></span>
+    <div class="fallback-space-stage" style={fallbackOrbitStyle}>
+      <div class="fallback-moon-orbit" data-fallback-body="moon">
+        <span class="fallback-moon" style={getFallbackBodyStyle(fallbackMoonProjection)}>
+          <span class="fallback-moon-crater fallback-moon-crater-one"></span>
+          <span class="fallback-moon-crater fallback-moon-crater-two"></span>
+          <span class="fallback-body-label">MOON</span>
+        </span>
       </div>
-    {/each}
+      {#each fallbackDisplayNeos as neo (neo.id)}
+        <div
+          class="fallback-neo-orbit"
+          data-fallback-body="neo"
+          data-neo-id={neo.id}
+          style={`--neo-radius:${neo.orbitRadius}px;--neo-size:${neo.size}px;--neo-color:${neo.color};--neo-duration:${neo.duration}s;--neo-delay:${neo.delay}s;`}
+        >
+          <span
+            class={`fallback-neo fallback-neo-${neo.shape}`}
+            style={getFallbackBodyStyle(neo.projection)}
+          ></span>
+        </div>
+      {/each}
+    </div>
     <div class={`fallback-earth pattern-${earthPattern}`}>
       <span class="fallback-shine"></span>
     </div>
@@ -694,7 +839,7 @@ import { generateLandmassMap } from "./landmass.js";
       <button aria-label="Zoom in" on:click={() => sceneController?.zoomBy(1)}>+</button>
       <button aria-label="Zoom out" on:click={() => sceneController?.zoomBy(-1)}>−</button>
     </div>
-    <div class="scene-key"><span class="moon-key"></span>MOON // 1 LD // TIDALLY LOCKED</div>
+  <div class="scene-key"><span class="moon-key"></span>MOON // 1 LD // TIDALLY LOCKED // DRAG TO ORBIT // SCROLL TO ZOOM</div>
   {/if}
 </div>
 
@@ -708,6 +853,25 @@ import { generateLandmassMap } from "./landmass.js";
     background:
       radial-gradient(circle at 50% 48%, rgba(29, 54, 115, 0.32), transparent 44%),
       #050612;
+  }
+
+  .scene-shell::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: 0;
+    pointer-events: none;
+    opacity: 0.72;
+    background:
+      radial-gradient(circle at 8% 17%, rgba(255, 255, 255, 0.9) 0 1px, transparent 1.5px),
+      radial-gradient(circle at 22% 74%, rgba(158, 219, 255, 0.78) 0 1px, transparent 1.6px),
+      radial-gradient(circle at 37% 28%, rgba(255, 255, 255, 0.66) 0 1px, transparent 1.4px),
+      radial-gradient(circle at 53% 83%, rgba(255, 98, 210, 0.72) 0 1px, transparent 1.5px),
+      radial-gradient(circle at 67% 16%, rgba(255, 255, 255, 0.86) 0 1px, transparent 1.5px),
+      radial-gradient(circle at 82% 61%, rgba(158, 219, 255, 0.75) 0 1px, transparent 1.6px),
+      radial-gradient(circle at 93% 34%, rgba(255, 255, 255, 0.8) 0 1px, transparent 1.5px),
+      radial-gradient(circle at 14% 45%, rgba(255, 255, 255, 0.48) 0 1px, transparent 1.4px),
+      radial-gradient(circle at 74% 88%, rgba(255, 255, 255, 0.56) 0 1px, transparent 1.4px);
   }
 
   .scene-shell.compact {
@@ -728,17 +892,29 @@ import { generateLandmassMap } from "./landmass.js";
   }
 
   .webgl-canvas {
-    z-index: 1;
+    z-index: 3;
     image-rendering: auto;
+    cursor: grab;
+  }
+
+  .webgl-canvas:active {
+    cursor: grabbing;
   }
 
   .scene-fallback {
     position: absolute;
     inset: 0;
-    z-index: 2;
+    z-index: 1;
     display: grid;
     place-items: center;
     perspective: 1100px;
+    transform-style: preserve-3d;
+    pointer-events: none;
+  }
+
+  .fallback-space-stage {
+    position: absolute;
+    inset: 0;
     transform-style: preserve-3d;
     pointer-events: none;
   }
@@ -751,7 +927,8 @@ import { generateLandmassMap } from "./landmass.js";
     border: 1px dashed rgba(158, 219, 255, 0.16);
     border-radius: 50%;
     pointer-events: none;
-    transform: translate(-50%, -50%) scale(var(--fallback-earth-scale, 1));
+    transform-style: preserve-3d;
+    transform: translate(-50%, -50%) rotateX(var(--fallback-orbit-pitch, 0deg)) rotateY(var(--fallback-orbit-yaw, 0deg)) scale(var(--fallback-earth-scale, 1));
   }
 
   .fallback-moon-orbit {
@@ -769,7 +946,7 @@ import { generateLandmassMap } from "./landmass.js";
     display: block;
     width: clamp(1rem, 3vw, 1.55rem);
     aspect-ratio: 1;
-    transform: translate(-50%, -50%);
+    transform: translate(-50%, -50%) scale(var(--fallback-body-scale, 1));
     overflow: hidden;
     border: 1px solid rgba(240, 238, 235, 0.72);
     border-radius: 50%;
@@ -783,7 +960,7 @@ import { generateLandmassMap } from "./landmass.js";
       inset 0.16rem 0.12rem 0.2rem rgba(255, 255, 255, 0.38),
       0 0 0 0.18rem rgba(170, 167, 179, 0.12),
       0 0 0.8rem rgba(209, 205, 222, 0.48);
-    transform: translate(-50%, -50%) rotateY(-18deg);
+    transform: translate(-50%, -50%) scale(var(--fallback-body-scale, 1)) rotateY(-18deg);
   }
 
   .fallback-moon::after {
@@ -854,7 +1031,7 @@ import { generateLandmassMap } from "./landmass.js";
       inset 0.08rem 0.06rem 0.12rem color-mix(in srgb, white 40%, transparent),
       0 0 0 0.12rem color-mix(in srgb, var(--neo-color) 32%, transparent),
       0 0 0.7rem color-mix(in srgb, var(--neo-color) 60%, transparent);
-    transform: translate(-50%, -50%) rotateY(-20deg) rotateX(12deg);
+    transform: translate(-50%, -50%) scale(var(--fallback-body-scale, 1)) rotateY(-20deg) rotateX(12deg);
   }
 
   .fallback-neo-angular {
@@ -863,13 +1040,13 @@ import { generateLandmassMap } from "./landmass.js";
 
   .fallback-neo-metallic {
     border-radius: 38% 62% 42% 58%;
-    transform: translate(-50%, -50%) rotateY(-20deg) rotateX(12deg) rotate(24deg) skewX(-8deg);
+    transform: translate(-50%, -50%) scale(var(--fallback-body-scale, 1)) rotateY(-20deg) rotateX(12deg) rotate(24deg) skewX(-8deg);
   }
 
   .fallback-neo-elongated {
     width: calc(var(--neo-size) * 1.55);
     border-radius: 56% 44% 50% 42%;
-    transform: translate(-50%, -50%) rotateY(-20deg) rotateX(12deg) rotate(-18deg);
+    transform: translate(-50%, -50%) scale(var(--fallback-body-scale, 1)) rotateY(-20deg) rotateX(12deg) rotate(-18deg);
   }
 
   .fallback-neo-cratered {
@@ -882,13 +1059,13 @@ import { generateLandmassMap } from "./landmass.js";
 
   @keyframes fallback-moon-orbit {
     to {
-      transform: translate(-50%, -50%) scale(var(--fallback-earth-scale, 1)) rotate(360deg);
+      transform: translate(-50%, -50%) rotateX(var(--fallback-orbit-pitch, 0deg)) rotateY(var(--fallback-orbit-yaw, 0deg)) scale(var(--fallback-earth-scale, 1)) rotate(360deg);
     }
   }
 
   @keyframes fallback-neo-orbit {
     to {
-      transform: translate(-50%, -50%) scale(var(--fallback-earth-scale, 1)) rotate(360deg);
+      transform: translate(-50%, -50%) rotateX(var(--fallback-orbit-pitch, 0deg)) rotateY(var(--fallback-orbit-yaw, 0deg)) scale(var(--fallback-earth-scale, 1)) rotate(360deg);
     }
   }
 
@@ -905,14 +1082,14 @@ import { generateLandmassMap } from "./landmass.js";
       radial-gradient(ellipse at 28% 23%, rgba(255, 255, 255, 0.56) 0 7%, transparent 20%),
       radial-gradient(ellipse at 37% 35%, transparent 0 44%, rgba(0, 0, 0, 0.14) 63%, rgba(0, 0, 0, 0.68) 100%),
       var(--fallback-map);
-    background-position: center, center, center;
+    background-position: center, center, var(--fallback-earth-map-shift, 50%) center;
     background-size: auto, auto, cover;
     box-shadow:
       0 0 0 0.35rem color-mix(in srgb, var(--fallback-atmosphere) 20%, transparent),
       0 0 2.2rem color-mix(in srgb, var(--fallback-atmosphere) 62%, transparent),
       inset -1.35rem -0.9rem 1.7rem rgba(3, 5, 22, 0.66),
       inset 0.55rem 0.4rem 1.1rem rgba(255, 255, 255, 0.2);
-    transform: scale(var(--fallback-earth-scale, 1)) rotateY(-12deg) rotateX(7deg);
+    transform: scale(var(--fallback-earth-scale, 1)) rotateY(var(--fallback-earth-yaw, -12deg)) rotateX(calc(7deg + var(--fallback-earth-pitch, 0deg)));
     transform-style: preserve-3d;
     backface-visibility: hidden;
     will-change: transform;
