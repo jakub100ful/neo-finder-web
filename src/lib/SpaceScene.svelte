@@ -44,6 +44,25 @@
     }
   };
 
+  // The scene uses Earth's rendered radius as its single distance unit.
+  // Real-world ratios are preserved: 1 lunar distance and 1 AU are both
+  // projected from NASA's mean distances using the same scale.
+  const EARTH_RADIUS_SCENE = 12;
+  const EARTH_RADIUS_KM = 6371;
+  const MOON_RADIUS_KM = 1737.4;
+  const MOON_DISTANCE_KM = 384400;
+  const SUN_RADIUS_KM = 696340;
+  const AU_KM = 149597870.7;
+  const EARTH_ORBIT_PERIOD_DAYS = 365.256;
+  const MOON_ORBIT_PERIOD_DAYS = 27.32166;
+  const SIMULATED_DAYS_PER_SECOND = 1;
+  const MOON_RADIUS_SCENE = EARTH_RADIUS_SCENE * (MOON_RADIUS_KM / EARTH_RADIUS_KM);
+  const MOON_ORBIT_RADIUS = EARTH_RADIUS_SCENE * (MOON_DISTANCE_KM / EARTH_RADIUS_KM);
+  const SUN_RADIUS_SCENE = EARTH_RADIUS_SCENE * (SUN_RADIUS_KM / EARTH_RADIUS_KM);
+  const SUN_ORBIT_RADIUS = EARTH_RADIUS_SCENE * (AU_KM / EARTH_RADIUS_KM);
+
+  let zoomScale = 1;
+
   $: if (sceneController && neos) {
     sceneController.updateNeos(neos);
   }
@@ -68,7 +87,7 @@
 
       let palette = THEMES[earthTheme] || THEMES.aqua;
       const scene = new THREE.Scene();
-      const camera = new THREE.PerspectiveCamera(33, 1, 0.1, 220);
+      const camera = new THREE.PerspectiveCamera(33, 1, 1, SUN_ORBIT_RADIUS * 1.5);
       const renderer = new THREE.WebGLRenderer({
         canvas,
         alpha: true,
@@ -77,13 +96,25 @@
       });
       renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
       renderer.outputColorSpace = THREE.SRGBColorSpace;
-      camera.position.set(0, 8, 74);
+      const cameraDirection = new THREE.Vector3(0, 8, 74).normalize();
+      const defaultCameraDistance = Math.sqrt(8 * 8 + 74 * 74);
+      const minCameraDistance = defaultCameraDistance * 0.55;
+      const maxCameraDistance = defaultCameraDistance * 10;
+      const defaultFov = 33;
+      const maxFov = 92;
+      let cameraDistance = defaultCameraDistance;
+      let targetCameraDistance = defaultCameraDistance;
 
+      const earthFrame = new THREE.Group();
+      scene.add(earthFrame);
       const ambient = new THREE.AmbientLight(0x7ca6ff, 1.4);
       const keyLight = new THREE.PointLight(0xffffff, 2.4, 160);
       keyLight.position.set(-34, 24, 42);
-      const sunLight = new THREE.PointLight(palette.sun, 2.1, 150);
-      scene.add(ambient, keyLight, sunLight);
+      const sunLight = new THREE.DirectionalLight(palette.sun, 1.25);
+      sunLight.position.set(0, 0, 0);
+      sunLight.target.position.set(SUN_ORBIT_RADIUS, 0, 0);
+      scene.add(ambient, sunLight, sunLight.target);
+      earthFrame.add(keyLight);
 
       const starPositions = [];
       for (let index = 0; index < 460; index += 1) {
@@ -109,7 +140,7 @@
         sizeAttenuation: true
       });
       const stars = new THREE.Points(starGeometry, starMaterial);
-      scene.add(stars);
+      earthFrame.add(stars);
 
       const earthGroup = new THREE.Group();
       const earthMaterial = new THREE.MeshStandardMaterial({
@@ -128,7 +159,7 @@
       );
       earthMaterial.map = earthTexture;
       const earth = new THREE.Mesh(
-        new THREE.SphereGeometry(12, 24, 16),
+        new THREE.SphereGeometry(EARTH_RADIUS_SCENE, 24, 16),
         earthMaterial
       );
       earthGroup.add(earth);
@@ -139,7 +170,7 @@
         opacity: 0.3
       });
       const grid = new THREE.LineSegments(
-        new THREE.WireframeGeometry(new THREE.SphereGeometry(12.12, 12, 8)),
+        new THREE.WireframeGeometry(new THREE.SphereGeometry(EARTH_RADIUS_SCENE * 1.01, 12, 8)),
         gridMaterial
       );
       earthGroup.add(grid);
@@ -152,12 +183,12 @@
         blending: THREE.AdditiveBlending
       });
       const atmosphere = new THREE.Mesh(
-        new THREE.SphereGeometry(12.8, 20, 12),
+        new THREE.SphereGeometry(EARTH_RADIUS_SCENE * 1.067, 20, 12),
         atmosphereMaterial
       );
       atmosphere.visible = atmosphereEnabled;
       earthGroup.add(atmosphere);
-      scene.add(earthGroup);
+      earthFrame.add(earthGroup);
 
       const sunSystem = new THREE.Group();
       const sunMaterial = new THREE.MeshBasicMaterial({
@@ -166,11 +197,11 @@
         opacity: 0.94
       });
       const sun = new THREE.Mesh(
-        new THREE.SphereGeometry(5.4, 12, 8),
+        new THREE.SphereGeometry(SUN_RADIUS_SCENE, 18, 12),
         sunMaterial
       );
       const sunGlow = new THREE.Mesh(
-        new THREE.SphereGeometry(8.7, 12, 8),
+        new THREE.SphereGeometry(SUN_RADIUS_SCENE * 1.15, 18, 12),
         new THREE.MeshBasicMaterial({
           color: palette.sun,
           transparent: true,
@@ -182,23 +213,25 @@
       scene.add(sunSystem);
 
       const moonPivot = new THREE.Group();
+      let moonTexture = createMoonTexture(THREE);
       const moonMaterial = new THREE.MeshStandardMaterial({
         color: 0xaaa7b3,
+        map: moonTexture,
         roughness: 1,
         flatShading: true
       });
       const moon = new THREE.Mesh(
-        new THREE.SphereGeometry(2.5, 12, 8),
+        new THREE.SphereGeometry(MOON_RADIUS_SCENE, 16, 10),
         moonMaterial
       );
-      moon.position.set(26, 3.2, 0);
+      moon.position.set(MOON_ORBIT_RADIUS, 0, 0);
       moonPivot.add(moon);
-      scene.add(moonPivot);
+      earthFrame.add(moonPivot);
 
       const orbitGroup = new THREE.Group();
       const asteroidGroup = new THREE.Group();
       const moonOrbitGroup = new THREE.Group();
-      scene.add(orbitGroup, asteroidGroup, moonOrbitGroup);
+      earthFrame.add(orbitGroup, asteroidGroup, moonOrbitGroup);
       const asteroidObjects = [];
 
       function createOrbitLine(radius, color, inclination, opacity = 0.42) {
@@ -224,7 +257,7 @@
         );
       }
 
-      moonOrbitGroup.add(createOrbitLine(26, palette.moonOrbit, 0.12, 0.2));
+      moonOrbitGroup.add(createOrbitLine(MOON_ORBIT_RADIUS, palette.moonOrbit, 0.12, 0.2));
 
       function createEarthTexture(Engine, pattern, land, fluid) {
         const mapCanvas = document.createElement("canvas");
@@ -307,6 +340,69 @@
         }
 
         const texture = new Engine.CanvasTexture(mapCanvas);
+        texture.colorSpace = Engine.SRGBColorSpace;
+        texture.minFilter = Engine.NearestFilter;
+        texture.magFilter = Engine.NearestFilter;
+        return texture;
+      }
+
+      function createMoonTexture(Engine) {
+        const moonCanvas = document.createElement("canvas");
+        moonCanvas.width = 256;
+        moonCanvas.height = 128;
+        const context = moonCanvas.getContext("2d");
+        context.fillStyle = "#777784";
+        context.fillRect(0, 0, moonCanvas.width, moonCanvas.height);
+
+        context.fillStyle = "rgba(202, 199, 207, 0.2)";
+        [
+          [0.18, 0.29, 0.18, 0.2],
+          [0.63, 0.66, 0.25, 0.22],
+          [0.82, 0.25, 0.13, 0.13],
+          [0.39, 0.78, 0.19, 0.16]
+        ].forEach(([x, y, width, height]) => {
+          context.beginPath();
+          context.ellipse(
+            x * moonCanvas.width,
+            y * moonCanvas.height,
+            width * moonCanvas.width,
+            height * moonCanvas.height,
+            0,
+            0,
+            Math.PI * 2
+          );
+          context.fill();
+        });
+
+        const craters = [
+          [0.08, 0.2, 0.028], [0.2, 0.52, 0.052], [0.31, 0.19, 0.034],
+          [0.37, 0.53, 0.075], [0.49, 0.31, 0.043], [0.58, 0.84, 0.035],
+          [0.69, 0.42, 0.06], [0.77, 0.78, 0.04], [0.91, 0.56, 0.07],
+          [0.97, 0.15, 0.025], [0.53, 0.08, 0.02]
+        ];
+        craters.forEach(([x, y, radius], index) => {
+          const pixelX = x * moonCanvas.width;
+          const pixelY = y * moonCanvas.height;
+          const pixelRadius = radius * moonCanvas.width;
+          context.fillStyle = index % 2 ? "rgba(46, 46, 59, 0.42)" : "rgba(38, 38, 50, 0.32)";
+          context.beginPath();
+          context.ellipse(pixelX, pixelY, pixelRadius, pixelRadius * 0.72, 0, 0, Math.PI * 2);
+          context.fill();
+          context.strokeStyle = "rgba(211, 208, 215, 0.3)";
+          context.lineWidth = Math.max(1, pixelRadius * 0.14);
+          context.beginPath();
+          context.ellipse(pixelX - pixelRadius * 0.08, pixelY - pixelRadius * 0.06, pixelRadius * 0.78, pixelRadius * 0.55, 0, 0, Math.PI * 2);
+          context.stroke();
+        });
+
+        context.fillStyle = "rgba(240, 238, 235, 0.12)";
+        for (let index = 0; index < 180; index += 1) {
+          const x = (index * 47) % moonCanvas.width;
+          const y = (index * 29) % moonCanvas.height;
+          context.fillRect(x, y, 1, 1);
+        }
+
+        const texture = new Engine.CanvasTexture(moonCanvas);
         texture.colorSpace = Engine.SRGBColorSpace;
         texture.minFilter = Engine.NearestFilter;
         texture.magFilter = Engine.NearestFilter;
@@ -429,6 +525,51 @@
         earthTexture = nextTexture;
       }
 
+      function updateEarthOrbit(phase) {
+        earthFrame.position.set(
+          Math.cos(phase) * SUN_ORBIT_RADIUS,
+          0,
+          Math.sin(phase) * SUN_ORBIT_RADIUS
+        );
+        sunLight.target.position.copy(earthFrame.position);
+        sunLight.target.updateMatrixWorld();
+      }
+
+      function setTargetCameraDistance(nextDistance) {
+        targetCameraDistance = Math.min(
+          maxCameraDistance,
+          Math.max(minCameraDistance, nextDistance)
+        );
+        zoomScale = Number((targetCameraDistance / defaultCameraDistance).toFixed(1));
+      }
+
+      function zoomBy(direction) {
+        if (!direction) return;
+        setTargetCameraDistance(
+          targetCameraDistance * (direction > 0 ? 0.88 : 1.12)
+        );
+      }
+
+      function handleWheel(event) {
+        event.preventDefault();
+        zoomBy(event.deltaY > 0 ? -1 : 1);
+      }
+
+      function applyCamera(delta) {
+        cameraDistance += (targetCameraDistance - cameraDistance) * Math.min(1, delta * 8);
+        const zoomProgress = Math.max(
+          0,
+          (cameraDistance - defaultCameraDistance) /
+            (maxCameraDistance - defaultCameraDistance)
+        );
+        camera.fov = defaultFov + (maxFov - defaultFov) * zoomProgress;
+        camera.position
+          .copy(cameraDirection)
+          .multiplyScalar(cameraDistance)
+          .add(earthFrame.position);
+        camera.lookAt(earthFrame.position);
+      }
+
       function resize() {
         const width = Math.max(canvas.clientWidth, 240);
         const height = Math.max(canvas.clientHeight, 240);
@@ -441,7 +582,8 @@
       resizeObserver.observe(canvas.parentElement || canvas);
       resize();
 
-      sceneController = { updateNeos, updateEarth };
+      canvas.addEventListener("wheel", handleWheel, { passive: false });
+      sceneController = { updateNeos, updateEarth, zoomBy };
       updateNeos(neos);
       updateEarth({
         theme: earthTheme,
@@ -452,39 +594,44 @@
         atmosphereEnabled
       });
 
-      let frame;
-      let sunPhase = 0.8;
-      function animate() {
-        frame = requestAnimationFrame(animate);
-        earth.rotation.y += 0.002;
-        grid.rotation.y += 0.002;
-        atmosphere.rotation.y -= 0.0006;
-        stars.rotation.y += 0.00012;
-        moonPivot.rotation.y += 0.0024;
+      let earthOrbitPhase = 0;
+      let moonOrbitPhase = 0;
+      let previousTime = performance.now();
+      updateEarthOrbit(earthOrbitPhase);
+      applyCamera(1 / 60);
 
-        sunPhase += 0.0016;
-        const sunVisible = Math.sin(sunPhase) > -0.42;
-        sunSystem.visible = sunVisible;
-        sunLight.visible = sunVisible;
-        sunSystem.position.set(
-          Math.cos(sunPhase) * 78,
-          16 + Math.sin(sunPhase * 0.7) * 9,
-          Math.sin(sunPhase) * 78 - 26
-        );
-        sunLight.position.copy(sunSystem.position);
+      let frame;
+      function animate(timestamp) {
+        frame = requestAnimationFrame(animate);
+        const delta = Math.min((timestamp - previousTime) / 1000, 0.1);
+        previousTime = timestamp;
+        const simulatedDays = delta * SIMULATED_DAYS_PER_SECOND;
+        earthOrbitPhase =
+          (earthOrbitPhase + (simulatedDays * Math.PI * 2) / EARTH_ORBIT_PERIOD_DAYS) %
+          (Math.PI * 2);
+        moonOrbitPhase =
+          (moonOrbitPhase + (simulatedDays * Math.PI * 2) / MOON_ORBIT_PERIOD_DAYS) %
+          (Math.PI * 2);
+        updateEarthOrbit(earthOrbitPhase);
+        moonPivot.rotation.y = moonOrbitPhase;
+        applyCamera(delta);
+
+        earth.rotation.y += delta * 0.12;
+        grid.rotation.y += delta * 0.12;
+        atmosphere.rotation.y -= delta * 0.036;
+        stars.rotation.y += delta * 0.0072;
 
         asteroidObjects.forEach((object) => {
-          object.userData.phase += 0.0035 * object.userData.speed;
+          object.userData.phase += delta * 0.21 * object.userData.speed;
           const angle = object.userData.phase;
           object.position.set(
             Math.cos(angle) * object.userData.radius,
             Math.sin(angle) * object.userData.radius * object.userData.inclination,
             Math.sin(angle) * object.userData.radius
           );
-          object.rotation.x += object.userData.spin;
-          object.rotation.y += object.userData.spin * 1.2;
+          object.rotation.x += object.userData.spin * delta * 60;
+          object.rotation.y += object.userData.spin * delta * 72;
         });
-        camera.lookAt(0, 0, 0);
         renderer.render(scene, camera);
       }
       animate();
@@ -492,6 +639,7 @@
       cleanup = () => {
         cancelAnimationFrame(frame);
         resizeObserver.disconnect();
+        canvas.removeEventListener("wheel", handleWheel);
         disposeGroup(orbitGroup);
         disposeGroup(asteroidGroup);
         disposeGroup(moonOrbitGroup);
@@ -506,6 +654,7 @@
           }
         });
         if (earthTexture) earthTexture.dispose();
+        if (moonTexture) moonTexture.dispose();
         renderer.dispose();
         sceneController = null;
       };
@@ -518,10 +667,15 @@
   });
 </script>
 
-<div class="scene-shell" role="img" aria-label="Animated Earth with saved near Earth objects in orbit">
+<div class="scene-shell" role="group" aria-label="Animated Earth with saved near Earth objects in orbit">
   <canvas bind:this={canvas}></canvas>
   <div class="scene-vignette"></div>
-  <div class="scene-key"><span class="sun-key"></span>SUN WINDOW <span class="moon-key"></span>MOON // TIDALLY LOCKED</div>
+  <div class="scene-zoom-controls" aria-label="Earth zoom controls">
+    <span>DISTANCE {zoomScale.toFixed(1)}×</span>
+    <button aria-label="Zoom in" on:click={() => sceneController?.zoomBy(1)}>+</button>
+    <button aria-label="Zoom out" on:click={() => sceneController?.zoomBy(-1)}>−</button>
+  </div>
+  <div class="scene-key"><span class="sun-key"></span>SUN // 1 AU <span class="moon-key"></span>MOON // 1 LD // TIDALLY LOCKED</div>
 </div>
 
 <style>
@@ -551,6 +705,36 @@
     background:
       linear-gradient(90deg, rgba(4, 5, 18, 0.55), transparent 18%, transparent 82%, rgba(4, 5, 18, 0.55)),
       linear-gradient(0deg, rgba(4, 5, 18, 0.5), transparent 18%, transparent 82%, rgba(4, 5, 18, 0.42));
+  }
+
+  .scene-zoom-controls {
+    position: absolute;
+    z-index: 2;
+    top: 0.8rem;
+    left: 0.9rem;
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    color: rgba(224, 223, 247, 0.66);
+    font-size: 0.5rem;
+    letter-spacing: 0.08em;
+  }
+
+  .scene-zoom-controls button {
+    display: grid;
+    width: 1.35rem;
+    height: 1.35rem;
+    place-items: center;
+    border: 1px solid rgba(97, 231, 255, 0.45);
+    background: rgba(5, 6, 18, 0.72);
+    color: var(--cyan);
+    font-size: 0.85rem;
+    line-height: 1;
+  }
+
+  .scene-zoom-controls button:hover {
+    border-color: var(--pink);
+    color: var(--pink);
   }
 
   .scene-key {

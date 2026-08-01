@@ -62,7 +62,8 @@
     "A close approach is a geometry event: distance and time, not a promise that an object will hit Earth.",
     "CNEOS refines orbits using observations reported by telescopes and the Minor Planet Center.",
     "The real feed gives us size estimates, velocity and miss distance. This scene compresses those values for play.",
-    "JPL's Small-Body Database can add physical clues such as albedo, spectral class and rotation period."
+    "JPL's Small-Body Database can add physical clues such as albedo, spectral class and rotation period.",
+    "The scene keeps one distance scale: the Moon sits at one lunar distance and the Sun at one astronomical unit."
   ];
 
   let view = "intro";
