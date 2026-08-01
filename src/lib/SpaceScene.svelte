@@ -1,6 +1,7 @@
 <script>
-  import { onMount } from "svelte";
-  import { getSceneMetrics } from "./neo.js";
+import { onMount } from "svelte";
+import { getSceneMetrics } from "./neo.js";
+import { generateLandmassMap } from "./landmass.js";
   import {
     EARTH_RADIUS_SCENE,
     MOON_ORBIT_PERIOD_DAYS,
@@ -20,12 +21,16 @@
   export let fluidColor = "#0c89c7";
   export let atmosphereColor = "#61e7ff";
   export let atmosphereEnabled = true;
+  export let landmassConfig = {};
+  export let compact = false;
 
   let canvas;
   let sceneController = null;
   let renderError = "";
   let renderStatus = "INITIALISING";
   let fallbackNeos = [];
+  let fallbackTexture = "";
+  $: fallbackMapStyle = fallbackTexture ? `url("${fallbackTexture}")` : "var(--fallback-fluid)";
 
   const THEMES = {
     aqua: {
@@ -89,7 +94,8 @@
       land: landColor,
       fluid: fluidColor,
       atmosphere: atmosphereColor,
-      atmosphereEnabled
+      atmosphereEnabled,
+      landmass: landmassConfig
     });
   }
 
@@ -173,9 +179,9 @@
       });
       let earthTexture = createEarthTexture(
         THREE,
-        earthPattern,
         landColor,
-        fluidColor
+        fluidColor,
+        landmassConfig
       );
       earthMaterial.map = earthTexture;
       const earth = new THREE.Mesh(
@@ -257,91 +263,48 @@
 
       moonOrbitGroup.add(createOrbitLine(MOON_ORBIT_RADIUS, palette.moonOrbit, 0.12, 0.2));
 
-      function createEarthTexture(Engine, pattern, land, fluid) {
+      function createEarthTexture(Engine, land, fluid, config) {
         const mapCanvas = document.createElement("canvas");
-        mapCanvas.width = 512;
-        mapCanvas.height = 256;
+        mapCanvas.width = 384;
+        mapCanvas.height = 192;
         const context = mapCanvas.getContext("2d");
         if (!context) throw new Error("2D canvas context unavailable for Earth texture");
-        context.fillStyle = fluid || "#0c89c7";
-        context.fillRect(0, 0, mapCanvas.width, mapCanvas.height);
 
-        const point = (x, y) => [x * mapCanvas.width, y * mapCanvas.height];
-        const polygon = (points, fill = land || "#68df9f") => {
-          context.beginPath();
-          points.forEach((item, index) => {
-            const [x, y] = point(item[0], item[1]);
-            if (index === 0) context.moveTo(x, y);
-            else context.lineTo(x, y);
-          });
-          context.closePath();
-          context.fillStyle = fill;
-          context.fill();
-        };
+        const map = generateLandmassMap(
+          mapCanvas.width,
+          mapCanvas.height,
+          config
+        );
+        const landRgb = new Engine.Color(land || "#68df9f");
+        const fluidRgb = new Engine.Color(fluid || "#0c89c7");
+        const image = context.createImageData(map.width, map.height);
+        const shade = (value, brightness) =>
+          Math.max(0, Math.min(255, Math.round(value * 255 * brightness)));
 
-        const continents = [
-          [[0.03, 0.28], [0.11, 0.18], [0.17, 0.2], [0.2, 0.32], [0.16, 0.43], [0.08, 0.42]],
-          [[0.21, 0.51], [0.28, 0.39], [0.34, 0.45], [0.32, 0.67], [0.26, 0.73], [0.21, 0.63]],
-          [[0.39, 0.2], [0.49, 0.16], [0.55, 0.27], [0.51, 0.38], [0.43, 0.33]],
-          [[0.49, 0.53], [0.59, 0.43], [0.66, 0.48], [0.7, 0.64], [0.62, 0.78], [0.53, 0.7]],
-          [[0.76, 0.27], [0.86, 0.2], [0.97, 0.26], [0.93, 0.42], [0.82, 0.45], [0.75, 0.38]]
-        ];
-
-        if (pattern === "archipelago") {
-          const islands = [
-            [0.12, 0.27, 0.06], [0.2, 0.56, 0.08], [0.31, 0.34, 0.05],
-            [0.43, 0.62, 0.07], [0.57, 0.28, 0.05], [0.68, 0.52, 0.08],
-            [0.82, 0.3, 0.06], [0.9, 0.68, 0.05], [0.5, 0.82, 0.045]
-          ];
-          islands.forEach(([x, y, size]) => {
-            context.fillStyle = land || "#68df9f";
-            context.fillRect(
-              x * mapCanvas.width,
-              y * mapCanvas.height,
-              size * mapCanvas.width,
-              size * mapCanvas.height * 0.7
-            );
-          });
-        } else if (pattern === "gridworld") {
-          continents.forEach((shape) => polygon(shape));
-          context.strokeStyle = "rgba(255,255,255,0.14)";
-          context.lineWidth = 2;
-          for (let x = 0; x < mapCanvas.width; x += 32) {
-            context.beginPath();
-            context.moveTo(x, 0);
-            context.lineTo(x, mapCanvas.height);
-            context.stroke();
+        for (let y = 0; y < map.height; y += 1) {
+          for (let x = 0; x < map.width; x += 1) {
+            const index = y * map.width + x;
+            const offset = index * 4;
+            const isLand = map.mask[index] === 1;
+            const base = isLand ? landRgb : fluidRgb;
+            const brightness = isLand
+              ? 0.82 + map.values[index] * 0.34
+              : 0.78 + map.values[index] * 0.16;
+            image.data[offset] = shade(base.r, brightness);
+            image.data[offset + 1] = shade(base.g, brightness);
+            image.data[offset + 2] = shade(base.b, brightness);
+            image.data[offset + 3] = 255;
           }
-          for (let y = 0; y < mapCanvas.height; y += 32) {
-            context.beginPath();
-            context.moveTo(0, y);
-            context.lineTo(mapCanvas.width, y);
-            context.stroke();
-          }
-        } else if (pattern === "rings") {
-          continents.forEach((shape) => polygon(shape));
-          context.strokeStyle = land || "#68df9f";
-          context.lineWidth = 9;
-          for (let x = 50; x < mapCanvas.width; x += 105) {
-            context.beginPath();
-            context.ellipse(x, 125, 30, 75, 0, 0, Math.PI * 2);
-            context.stroke();
-          }
-        } else {
-          continents.forEach((shape) => polygon(shape));
         }
 
-        context.fillStyle = "rgba(255,255,255,0.16)";
-        for (let index = 0; index < 90; index += 1) {
-          const x = (index * 71) % mapCanvas.width;
-          const y = (index * 43) % mapCanvas.height;
-          context.fillRect(x, y, 1, 1);
-        }
-
+        context.putImageData(image, 0, 0);
         const texture = new Engine.CanvasTexture(mapCanvas);
         texture.colorSpace = Engine.SRGBColorSpace;
-        texture.minFilter = Engine.NearestFilter;
-        texture.magFilter = Engine.NearestFilter;
+        texture.wrapS = Engine.RepeatWrapping;
+        texture.wrapT = Engine.ClampToEdgeWrapping;
+        texture.minFilter = Engine.LinearFilter;
+        texture.magFilter = Engine.LinearFilter;
+        fallbackTexture = mapCanvas.toDataURL("image/png");
         return texture;
       }
 
@@ -512,9 +475,9 @@
         });
         const nextTexture = createEarthTexture(
           THREE,
-          next.pattern,
           next.land,
-          next.fluid
+          next.fluid,
+          next.landmass
         );
         earthMaterial.map = nextTexture;
         earthMaterial.needsUpdate = true;
@@ -582,10 +545,11 @@
       updateEarth({
         theme: earthTheme,
         pattern: earthPattern,
-        land: landColor,
-        fluid: fluidColor,
-        atmosphere: atmosphereColor,
-        atmosphereEnabled
+          land: landColor,
+          fluid: fluidColor,
+          atmosphere: atmosphereColor,
+          atmosphereEnabled,
+          landmass: landmassConfig
       });
 
       let moonOrbitPhase = 0;
@@ -678,6 +642,7 @@
 
 <div
   class="scene-shell"
+  class:compact={compact}
   role="group"
   aria-label="Animated Earth with saved near Earth objects in orbit"
   data-render-status={renderStatus}
@@ -687,7 +652,7 @@
     aria-hidden="true"
     data-fallback-moon="true"
     data-fallback-neo-count={fallbackNeos.length}
-    style={`--fallback-fluid:${fluidColor};--fallback-land:${landColor};--fallback-atmosphere:${atmosphereColor};--fallback-earth-scale:${(1 / zoomScale).toFixed(2)};`}
+    style={`--fallback-fluid:${fluidColor};--fallback-land:${landColor};--fallback-atmosphere:${atmosphereColor};--fallback-map:${fallbackMapStyle};--fallback-earth-scale:${(1 / zoomScale).toFixed(2)};`}
   >
     <!--
       This compositor-safe presentation layer mirrors the live Three.js scene
@@ -712,10 +677,6 @@
       </div>
     {/each}
     <div class={`fallback-earth pattern-${earthPattern}`}>
-      <span class="fallback-landmass fallback-landmass-one"></span>
-      <span class="fallback-landmass fallback-landmass-two"></span>
-      <span class="fallback-landmass fallback-landmass-three"></span>
-      <span class="fallback-landmass fallback-landmass-four"></span>
       <span class="fallback-shine"></span>
     </div>
   </div>
@@ -727,12 +688,14 @@
       <span>Reload the orbital display to reconnect the renderer.</span>
     </div>
   {/if}
-  <div class="scene-zoom-controls" aria-label="Earth zoom controls">
-    <span>DISTANCE {zoomScale.toFixed(1)}×</span>
-    <button aria-label="Zoom in" on:click={() => sceneController?.zoomBy(1)}>+</button>
-    <button aria-label="Zoom out" on:click={() => sceneController?.zoomBy(-1)}>−</button>
-  </div>
-  <div class="scene-key"><span class="moon-key"></span>MOON // 1 LD // TIDALLY LOCKED</div>
+  {#if !compact}
+    <div class="scene-zoom-controls" aria-label="Earth zoom controls">
+      <span>DISTANCE {zoomScale.toFixed(1)}×</span>
+      <button aria-label="Zoom in" on:click={() => sceneController?.zoomBy(1)}>+</button>
+      <button aria-label="Zoom out" on:click={() => sceneController?.zoomBy(-1)}>−</button>
+    </div>
+    <div class="scene-key"><span class="moon-key"></span>MOON // 1 LD // TIDALLY LOCKED</div>
+  {/if}
 </div>
 
 <style>
@@ -747,6 +710,10 @@
       #050612;
   }
 
+  .scene-shell.compact {
+    min-height: 0;
+  }
+
   canvas {
     display: block;
     position: absolute;
@@ -754,6 +721,10 @@
     width: 100%;
     height: 100%;
     min-height: 340px;
+  }
+
+  .scene-shell.compact canvas {
+    min-height: 0;
   }
 
   .webgl-canvas {
@@ -933,7 +904,9 @@
     background:
       radial-gradient(ellipse at 28% 23%, rgba(255, 255, 255, 0.56) 0 7%, transparent 20%),
       radial-gradient(ellipse at 37% 35%, transparent 0 44%, rgba(0, 0, 0, 0.14) 63%, rgba(0, 0, 0, 0.68) 100%),
-      var(--fallback-fluid);
+      var(--fallback-map);
+    background-position: center, center, center;
+    background-size: auto, auto, cover;
     box-shadow:
       0 0 0 0.35rem color-mix(in srgb, var(--fallback-atmosphere) 20%, transparent),
       0 0 2.2rem color-mix(in srgb, var(--fallback-atmosphere) 62%, transparent),
@@ -951,10 +924,8 @@
     inset: -2%;
     z-index: 2;
     border-radius: 50%;
-    background:
-      repeating-linear-gradient(90deg, transparent 0 22%, rgba(220, 250, 255, 0.19) 23% 23.5%, transparent 24.5% 47%),
-      repeating-linear-gradient(0deg, transparent 0 23%, rgba(220, 250, 255, 0.12) 24% 24.5%, transparent 25.5% 47%);
-    opacity: 0.42;
+    background: radial-gradient(ellipse at 30% 23%, rgba(220, 250, 255, 0.22), transparent 42%);
+    opacity: 0.24;
     mix-blend-mode: screen;
     transform: rotateY(12deg) scaleX(0.82);
     pointer-events: none;
@@ -968,69 +939,6 @@
     border-radius: 50%;
     background: radial-gradient(ellipse at 72% 54%, transparent 0 42%, rgba(2, 4, 20, 0.34) 73%, rgba(2, 4, 20, 0.76) 100%);
     pointer-events: none;
-  }
-
-  .fallback-earth.pattern-gridworld {
-    background-image:
-      linear-gradient(rgba(255, 255, 255, 0.12) 1px, transparent 1px),
-      linear-gradient(90deg, rgba(255, 255, 255, 0.12) 1px, transparent 1px),
-      radial-gradient(circle at 32% 27%, rgba(255, 255, 255, 0.26), transparent 15%),
-      var(--fallback-fluid);
-    background-size: 1.25rem 1.25rem, 1.25rem 1.25rem, auto, auto;
-  }
-
-  .fallback-earth.pattern-rings {
-    background-image:
-      repeating-radial-gradient(ellipse at 50% 50%, transparent 0 12%, rgba(255, 255, 255, 0.14) 13% 14%, transparent 15% 24%),
-      radial-gradient(circle at 32% 27%, rgba(255, 255, 255, 0.26), transparent 15%),
-      var(--fallback-fluid);
-  }
-
-  .fallback-landmass {
-    position: absolute;
-    z-index: 1;
-    display: block;
-    background: var(--fallback-land);
-    box-shadow:
-      inset -0.25rem -0.35rem 0 rgba(0, 0, 0, 0.22),
-      0.12rem 0.18rem 0 rgba(6, 21, 40, 0.18);
-    opacity: 0.96;
-  }
-
-  .fallback-landmass-one {
-    top: 18%;
-    left: 13%;
-    width: 31%;
-    height: 24%;
-    border-radius: 58% 42% 48% 34%;
-    transform: rotate(-14deg);
-  }
-
-  .fallback-landmass-two {
-    top: 44%;
-    left: 28%;
-    width: 24%;
-    height: 35%;
-    border-radius: 46% 54% 34% 62%;
-    transform: rotate(18deg);
-  }
-
-  .fallback-landmass-three {
-    top: 26%;
-    left: 52%;
-    width: 29%;
-    height: 22%;
-    border-radius: 40% 60% 36% 48%;
-    transform: rotate(9deg);
-  }
-
-  .fallback-landmass-four {
-    top: 52%;
-    left: 60%;
-    width: 24%;
-    height: 26%;
-    border-radius: 54% 36% 62% 42%;
-    transform: rotate(-22deg);
   }
 
   .fallback-shine {

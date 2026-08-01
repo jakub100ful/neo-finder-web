@@ -3,6 +3,12 @@
   import SpaceScene from "../lib/SpaceScene.svelte";
   import { demoNeos } from "../lib/data/demo-neos.js";
   import {
+    LANDMASS_DEFAULTS,
+    LANDMASS_STYLES,
+    normalizeLandmassConfig,
+    resolveLandmassConfig
+  } from "../lib/landmass.js";
+  import {
     FAVOURITES_STORAGE_KEY,
     PROFILE_STORAGE_KEY,
     featureFlags,
@@ -29,11 +35,34 @@
     { id: "plasma", name: "PLASMA PINK", color: "#ff62d2", surface: "#8137b7" }
   ];
 
-  const earthPatterns = [
-    { id: "continents", name: "PIXEL CONTINENTS", detail: "broken land plates" },
-    { id: "archipelago", name: "ARCHIPELAGO", detail: "island clusters" },
-    { id: "gridworld", name: "GRIDWORLD", detail: "mapped terrain" },
-    { id: "rings", name: "RINGED TERRA", detail: "retro latitude bands" }
+  const earthPatterns = LANDMASS_STYLES;
+
+  const landmassControls = [
+    {
+      key: "landCoverage",
+      label: "LAND COVERAGE",
+      help: "How much of the surface clears the sea threshold."
+    },
+    {
+      key: "continentalScale",
+      label: "CONTINENTAL SCALE",
+      help: "Low makes many smaller regions; high makes fewer large ones."
+    },
+    {
+      key: "coastCorrugation",
+      label: "COAST CORRUGATION",
+      help: "Adds multi-scale detail to coastlines without drawing grid noise."
+    },
+    {
+      key: "islandFracture",
+      label: "ISLAND FRACTURE",
+      help: "Blends in cellular breakup for island chains and micro-continents."
+    },
+    {
+      key: "tectonicWarp",
+      label: "TECTONIC WARP",
+      help: "Bends the underlying field so boundaries feel less blobby."
+    }
   ];
 
   const tagLegend = [
@@ -86,6 +115,15 @@
   let fluidColor = "#0c89c7";
   let atmosphereColor = "#61e7ff";
   let atmosphereEnabled = true;
+  let landmassConfig = { ...LANDMASS_DEFAULTS };
+  let draftEarthName = earthName;
+  let draftEarthTheme = earthTheme;
+  let draftEarthPattern = earthPattern;
+  let draftLandColor = landColor;
+  let draftFluidColor = fluidColor;
+  let draftAtmosphereColor = atmosphereColor;
+  let draftAtmosphereEnabled = atmosphereEnabled;
+  let draftLandmassConfig = { ...LANDMASS_DEFAULTS };
   let notice = "";
   let hydrated = false;
   let noticeTimer;
@@ -106,6 +144,17 @@
     fluidColor = profile?.fluidColor || "#0c89c7";
     atmosphereColor = profile?.atmosphereColor || "#61e7ff";
     atmosphereEnabled = profile?.atmosphereEnabled ?? true;
+    landmassConfig = profile?.landmassConfig
+      ? normalizeLandmassConfig(profile.landmassConfig)
+      : resolveLandmassConfig(earthPattern, LANDMASS_DEFAULTS);
+    draftLandmassConfig = { ...landmassConfig };
+    draftEarthName = earthName;
+    draftEarthTheme = earthTheme;
+    draftEarthPattern = earthPattern;
+    draftLandColor = landColor;
+    draftFluidColor = fluidColor;
+    draftAtmosphereColor = atmosphereColor;
+    draftAtmosphereEnabled = atmosphereEnabled;
     savedNeos = Array.isArray(storedFavourites) ? storedFavourites : [];
     token = getStoredNasaToken();
     tokenDraft = token;
@@ -121,7 +170,8 @@
       landColor,
       fluidColor,
       atmosphereColor,
-      atmosphereEnabled
+      atmosphereEnabled,
+      landmassConfig
     });
   }
 
@@ -276,26 +326,58 @@
 
   function openSettings() {
     lastView = view;
+    draftEarthName = earthName;
+    draftEarthTheme = earthTheme;
+    draftEarthPattern = earthPattern;
+    draftLandColor = landColor;
+    draftFluidColor = fluidColor;
+    draftAtmosphereColor = atmosphereColor;
+    draftAtmosphereEnabled = atmosphereEnabled;
+    draftLandmassConfig = { ...landmassConfig };
     view = "settings";
   }
 
-  function closeSettings() {
+  function cancelSettings() {
     view = lastView || "dashboard";
   }
 
-  function updateEarthTheme(theme) {
-    earthTheme = theme;
+  function saveEarthSettings() {
+    earthName = draftEarthName;
+    earthTheme = draftEarthTheme;
+    earthPattern = draftEarthPattern;
+    landColor = draftLandColor;
+    fluidColor = draftFluidColor;
+    atmosphereColor = draftAtmosphereColor;
+    atmosphereEnabled = draftAtmosphereEnabled;
+    landmassConfig = normalizeLandmassConfig(draftLandmassConfig);
     persistProfile();
+    view = lastView || "dashboard";
+    showNotice("Earth profile saved.");
   }
 
-  function updateEarthPattern(pattern) {
-    earthPattern = pattern;
-    persistProfile();
+  function updateDraftEarthTheme(theme) {
+    draftEarthTheme = theme;
   }
 
-  function handleEarthNameInput() {
-    earthName = earthName.toUpperCase().slice(0, 18);
-    persistProfile();
+  function updateDraftEarthPattern(pattern) {
+    draftEarthPattern = pattern;
+    draftLandmassConfig = resolveLandmassConfig(pattern, draftLandmassConfig);
+  }
+
+  function updateLandmassParam(parameter, event) {
+    draftLandmassConfig = {
+      ...draftLandmassConfig,
+      [parameter]: Number(event.currentTarget.value)
+    };
+  }
+
+  function formatLandmassValue(parameter, value) {
+    const rounded = Math.round(Number(value) * 100);
+    return parameter === "landCoverage" ? `${rounded}%` : `${rounded}`;
+  }
+
+  function handleDraftEarthNameInput() {
+    draftEarthName = draftEarthName.toUpperCase().slice(0, 18);
   }
 </script>
 
@@ -456,6 +538,7 @@
                 fluidColor={fluidColor}
                 atmosphereColor={atmosphereColor}
                 atmosphereEnabled={atmosphereEnabled}
+                landmassConfig={landmassConfig}
               />
               <div class="scene-caption">
                 <span>EARTH // {earthName}</span>
@@ -586,6 +669,7 @@
                   fluidColor={fluidColor}
                   atmosphereColor={atmosphereColor}
                   atmosphereEnabled={atmosphereEnabled}
+                  landmassConfig={landmassConfig}
                 />
               </div>
             </div>
@@ -712,47 +796,86 @@
           <div>
             <div class="eyebrow">PROFILE CONSOLE // LOCAL DEVICE</div>
             <h1>Customise your Earth.</h1>
-            <p class="page-lede">Your name, palette and NASA key are kept on this device. Nothing here is sent to a server.</p>
+            <p class="page-lede">Tune a spherical landmass field, inspect the live draft, then save it to your profile.</p>
           </div>
-          <button class="arcade-button compact" on:click={closeSettings}>DONE <span>✓</span></button>
+          <div class="settings-heading-actions">
+            <button class="ghost-button compact" on:click={cancelSettings}>CANCEL</button>
+            <button class="arcade-button compact" on:click={saveEarthSettings}>SAVE EARTH <span>✓</span></button>
+          </div>
         </section>
         <section class="settings-grid">
-          <div class="settings-card">
+          <div class="settings-card earth-settings-card">
             <div class="panel-header"><span>EARTH IDENTITY</span><span class="panel-index">A-01</span></div>
             <label for="earth-name">DISPLAY NAME</label>
-            <input id="earth-name" bind:value={earthName} on:input={handleEarthNameInput} maxlength="18" />
+            <input id="earth-name" bind:value={draftEarthName} on:input={handleDraftEarthNameInput} maxlength="18" />
             <div class="theme-label"><span>VISUAL SCHEME</span><span>SELECT ONE</span></div>
             <div class="theme-grid">
               {#each earthThemes as theme}
-                <button class:active={earthTheme === theme.id} class="theme-option" style={"--theme-color: " + theme.color + "; --theme-surface: " + theme.surface} on:click={() => updateEarthTheme(theme.id)}>
-                  <span class="theme-swatch"></span><span>{theme.name}</span>{#if earthTheme === theme.id}<b>✓</b>{/if}
-                </button>
-                {/each}
-            </div>
-            <div class="theme-label"><span>LANDMASS PATTERN</span><span>PIXEL MAP</span></div>
-            <div class="pattern-grid">
-              {#each earthPatterns as pattern}
-                <button class:active={earthPattern === pattern.id} class="pattern-option" on:click={() => updateEarthPattern(pattern.id)}>
-                  <span class={"pattern-swatch pattern-" + pattern.id}></span>
-                  <span><strong>{pattern.name}</strong><small>{pattern.detail}</small></span>
-                  {#if earthPattern === pattern.id}<b>✓</b>{/if}
+                <button class:active={draftEarthTheme === theme.id} class="theme-option" style={"--theme-color: " + theme.color + "; --theme-surface: " + theme.surface} on:click={() => updateDraftEarthTheme(theme.id)}>
+                  <span class="theme-swatch"></span><span>{theme.name}</span>{#if draftEarthTheme === theme.id}<b>✓</b>{/if}
                 </button>
               {/each}
             </div>
+            <div class="theme-label"><span>LANDMASS STYLE</span><span>PROCEDURAL FIELD</span></div>
+            <div class="pattern-grid">
+              {#each earthPatterns as pattern}
+                <button class:active={draftEarthPattern === pattern.id} class="pattern-option" on:click={() => updateDraftEarthPattern(pattern.id)}>
+                  <span class={"pattern-swatch pattern-" + pattern.id}></span>
+                  <span><strong>{pattern.name}</strong><small>{pattern.detail}</small></span>
+                  {#if draftEarthPattern === pattern.id}<b>✓</b>{/if}
+                </button>
+              {/each}
+            </div>
+            <p class="settings-copy style-note">A style sets a useful starting point; after that, the sliders are the authority.</p>
+            <div class="theme-label slider-heading"><span>PLANETARY MORPHOLOGY</span><span>DRAG TO PREVIEW</span></div>
+            <div class="landmass-controls">
+              {#each landmassControls as control}
+                <label class="slider-control" for={"landmass-" + control.key}>
+                  <span><strong>{control.label}</strong><output>{formatLandmassValue(control.key, draftLandmassConfig[control.key])}</output></span>
+                  <input
+                    id={"landmass-" + control.key}
+                    type="range"
+                    min="0"
+                    max="1"
+                    step="0.01"
+                    value={draftLandmassConfig[control.key]}
+                    on:input={(event) => updateLandmassParam(control.key, event)}
+                  />
+                  <small>{control.help}</small>
+                </label>
+              {/each}
+            </div>
             <div class="color-controls">
-              <label class="color-control"><span>LANDMASS COLOR</span><input type="color" bind:value={landColor} on:input={persistProfile} /></label>
-              <label class="color-control"><span>FLUID COLOR</span><input type="color" bind:value={fluidColor} on:input={persistProfile} /></label>
-              <label class="color-control"><span>ATMOSPHERE</span><input type="color" bind:value={atmosphereColor} on:input={persistProfile} /></label>
+              <label class="color-control"><span>LANDMASS COLOR</span><input type="color" bind:value={draftLandColor} /></label>
+              <label class="color-control"><span>FLUID COLOR</span><input type="color" bind:value={draftFluidColor} /></label>
+              <label class="color-control"><span>ATMOSPHERE</span><input type="color" bind:value={draftAtmosphereColor} /></label>
             </div>
             <label class="toggle-row">
-              <input type="checkbox" bind:checked={atmosphereEnabled} on:change={persistProfile} />
+              <input type="checkbox" bind:checked={draftAtmosphereEnabled} />
               <span>ATMOSPHERE LAYER</span>
-              <small>{atmosphereEnabled ? "GLOW SHELL ON" : "GLOW SHELL OFF"}</small>
+              <small>{draftAtmosphereEnabled ? "GLOW SHELL ON" : "GLOW SHELL OFF"}</small>
             </label>
-            <p class="settings-copy colour-note">Pick any fluid colour: ocean blue, toxic green, molten red or something entirely yours. The pattern is redrawn as a pixel map around the globe.</p>
+            <p class="settings-copy colour-note">The map samples warped 3D noise on a sphere, then layers fractal coast detail and cellular breakup. Draft changes stay local until you press SAVE EARTH.</p>
+          </div>
+          <div class="settings-card preview-settings-card">
+            <div class="panel-header"><span>UNSAVED PLANET PREVIEW</span><span class="panel-index">A-02</span></div>
+            <div class="settings-preview-frame">
+              <SpaceScene
+                compact={true}
+                neos={[]}
+                earthTheme={draftEarthTheme}
+                earthPattern={draftEarthPattern}
+                landColor={draftLandColor}
+                fluidColor={draftFluidColor}
+                atmosphereColor={draftAtmosphereColor}
+                atmosphereEnabled={draftAtmosphereEnabled}
+                landmassConfig={draftLandmassConfig}
+              />
+            </div>
+            <p class="settings-copy preview-copy"><strong>LIVE DRAFT.</strong> Move any slider or choose a style to redraw the same 3D Earth texture used by the dashboard. Save when the silhouette feels right; CANCEL discards the draft.</p>
           </div>
           <div class="settings-card">
-            <div class="panel-header"><span>NASA ACCESS</span><span class="panel-index">A-02</span></div>
+            <div class="panel-header"><span>NASA ACCESS</span><span class="panel-index">A-03</span></div>
             <p class="settings-copy">Use your own NASA developer key for the full hourly quota. The default demo key is fine for a quick scan but is rate-limited.</p>
             <label for="settings-token">API TOKEN</label>
             <input id="settings-token" bind:value={tokenDraft} type="password" autocomplete="off" placeholder="DEMO_KEY or your token" />

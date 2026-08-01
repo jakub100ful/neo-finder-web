@@ -1388,6 +1388,13 @@ input[type="date"] {
   gap: 1rem;
 }
 
+.settings-heading-actions {
+  display: flex;
+  align-items: center;
+  justify-content: end;
+  gap: 0.65rem;
+}
+
 .settings-card {
   display: grid;
   align-content: start;
@@ -1409,6 +1416,10 @@ input[type="date"] {
   display: flex;
   justify-content: space-between;
   margin-top: 1rem;
+}
+
+.slider-heading {
+  margin-top: 1.2rem;
 }
 
 .theme-grid {
@@ -1513,8 +1524,9 @@ input[type="date"] {
 
 .pattern-continents {
   background:
-    linear-gradient(135deg, transparent 0 23%, #68df9f 24% 42%, transparent 43% 100%),
-    linear-gradient(315deg, transparent 0 48%, #68df9f 49% 71%, transparent 72%),
+    radial-gradient(ellipse at 22% 32%, #68df9f 0 19%, transparent 20%),
+    radial-gradient(ellipse at 58% 66%, #68df9f 0 22%, transparent 23%),
+    radial-gradient(ellipse at 83% 29%, #68df9f 0 13%, transparent 14%),
     #0c89c7;
 }
 
@@ -1525,17 +1537,11 @@ input[type="date"] {
     #0c89c7;
 }
 
-.pattern-gridworld {
+.pattern-fractured {
   background:
-    linear-gradient(rgba(255, 255, 255, 0.2) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255, 255, 255, 0.2) 1px, transparent 1px),
-    #0c89c7;
-  background-size: 0.55rem 0.55rem;
-}
-
-.pattern-rings {
-  background:
-    repeating-radial-gradient(ellipse at center, #68df9f 0 2px, transparent 3px 8px),
+    radial-gradient(ellipse at 24% 26%, #68df9f 0 16%, transparent 17%),
+    radial-gradient(ellipse at 61% 58%, #68df9f 0 19%, transparent 20%),
+    radial-gradient(ellipse at 82% 28%, #68df9f 0 8%, transparent 9%),
     #0c89c7;
 }
 
@@ -1544,6 +1550,68 @@ input[type="date"] {
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 0.55rem;
   margin-top: 0.8rem;
+}
+
+.landmass-controls {
+  display: grid;
+  gap: 0.7rem;
+  padding: 0.75rem 0;
+  border-top: 1px solid rgba(151, 146, 206, 0.14);
+  border-bottom: 1px solid rgba(151, 146, 206, 0.14);
+}
+
+.slider-control {
+  display: grid;
+  gap: 0.28rem;
+}
+
+.slider-control > span {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+  color: #d9d6ec;
+  font-size: 0.56rem;
+  letter-spacing: 0.06em;
+}
+
+.slider-control output {
+  color: var(--cyan);
+  font-family: Arcade, monospace;
+  font-size: 0.58rem;
+}
+
+.slider-control input[type="range"] {
+  width: 100%;
+  min-height: 1rem;
+  accent-color: var(--pink);
+  cursor: pointer;
+}
+
+.slider-control small {
+  color: var(--dim);
+  font-size: 0.5rem;
+  line-height: 1.35;
+}
+
+.settings-preview-frame {
+  min-height: 19rem;
+  height: 22rem;
+  overflow: hidden;
+  border: 1px solid rgba(151, 146, 206, 0.2);
+  background: #050612;
+}
+
+.settings-preview-frame .scene-shell {
+  min-height: 100%;
+}
+
+.preview-copy {
+  line-height: 1.55;
+}
+
+.preview-copy strong {
+  color: var(--pink);
 }
 
 .color-control {
@@ -1960,6 +2028,11 @@ input[type="date"] {
   }
 
   .heading-actions {
+    justify-content: start;
+    margin-top: 1.2rem;
+  }
+
+  .settings-heading-actions {
     justify-content: start;
     margin-top: 1.2rem;
   }
