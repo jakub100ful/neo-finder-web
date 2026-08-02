@@ -18,6 +18,11 @@ import {
 import { getCameraOrbitPosition } from "./view-model.mjs";
 import { createAsteroidGeometry } from "./asteroid-geometry.mjs";
 import {
+  createMeshInstance,
+  disposeObject3D,
+  loadMeshTemplate
+} from "./neo-mesh.js";
+import {
   createEarthSurfaceMap,
   createMoonSurfaceMap,
   createSoftwareScene
@@ -373,6 +378,17 @@ import {
       const moonOrbitGroup = new THREE.Group();
       earthFrame.add(orbitGroup, asteroidGroup, moonOrbitGroup);
       const asteroidObjects = [];
+      let meshLoadGeneration = 0;
+      let objLoaderRequest = null;
+
+      function getObjLoader() {
+        if (!objLoaderRequest) {
+          objLoaderRequest = import("three/addons/loaders/OBJLoader.js").then(
+            ({ OBJLoader }) => OBJLoader
+          );
+        }
+        return objLoaderRequest;
+      }
 
       function createOrbitLine(
         radius,
@@ -449,21 +465,50 @@ import {
 
       function disposeGroup(group) {
         while (group.children.length) {
-          const child = group.children.pop();
-          child.traverse((object) => {
-            if (object.geometry) object.geometry.dispose();
-            if (object.material) {
-              if (Array.isArray(object.material)) {
-                object.material.forEach((material) => material.dispose());
-              } else {
-                object.material.dispose();
-              }
-            }
-          });
+          const child = group.children[group.children.length - 1];
+          group.remove(child);
+          disposeObject3D(child);
+        }
+      }
+
+      async function hydratePublishedMesh(object, metrics, buildVersion) {
+        if (!metrics.mesh) return;
+
+        try {
+          const Loader = await getObjLoader();
+          const template = await loadMeshTemplate(Loader, metrics.mesh);
+          if (
+            !template ||
+            buildVersion !== meshLoadGeneration ||
+            object.parent !== asteroidGroup
+          ) {
+            return;
+          }
+
+          const publishedBody = createMeshInstance(
+            THREE,
+            template,
+            metrics.appearance,
+            metrics.size
+          );
+          const previousBody = object.userData.body;
+          if (previousBody) {
+            object.remove(previousBody);
+            disposeObject3D(previousBody);
+          }
+          object.add(publishedBody);
+          object.userData.body = publishedBody;
+          object.userData.meshState = "PDS_MESH";
+        } catch (error) {
+          if (buildVersion === meshLoadGeneration && object.parent === asteroidGroup) {
+            object.userData.meshState = "PROCEDURAL";
+          }
+          console.warn("NEO Finder PDS mesh unavailable", error);
         }
       }
 
       function updateNeos(nextNeos) {
+        const buildVersion = ++meshLoadGeneration;
         disposeGroup(orbitGroup);
         disposeGroup(asteroidGroup);
         asteroidObjects.length = 0;
@@ -472,6 +517,7 @@ import {
         nextNeos.slice(0, 8).forEach((neo, index) => {
           const metrics = getSceneMetrics(neo, index);
           const appearance = metrics.appearance;
+          const meshRecord = metrics.mesh;
           const asteroidMaterial = new THREE.MeshStandardMaterial({
             color: appearance.materialColor,
             roughness: appearance.roughness,
@@ -515,7 +561,10 @@ import {
             bodyRadius: metrics.bodyRadius,
             minimumPeriapsisRadius: metrics.minimumPeriapsisRadius,
             spin: appearance.spin,
-            spinAxis: new THREE.Vector3(...appearance.spinAxis).normalize()
+            spinAxis: new THREE.Vector3(...appearance.spinAxis).normalize(),
+            body: asteroid,
+            meshRecord,
+            meshState: meshRecord ? "LOADING" : "PROCEDURAL"
           };
           asteroidGroup.add(object);
           orbitGroup.add(
@@ -530,6 +579,7 @@ import {
             )
           );
           asteroidObjects.push(object);
+          void hydratePublishedMesh(object, metrics, buildVersion);
         });
       }
 

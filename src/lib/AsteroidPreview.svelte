@@ -2,6 +2,11 @@
   import { onMount } from "svelte";
   import { getSceneMetrics } from "./neo.js";
   import { createAsteroidGeometry } from "./asteroid-geometry.mjs";
+  import {
+    createMeshInstance,
+    disposeObject3D,
+    loadMeshTemplate
+  } from "./neo-mesh.js";
 
   export let neo = null;
   export let compact = false;
@@ -14,8 +19,7 @@
     let cancelled = false;
     let frame = 0;
     let renderer;
-    let geometry;
-    let material;
+    let body;
     let resizeObserver;
 
     if (!neo) {
@@ -49,7 +53,7 @@
         renderer.outputColorSpace = THREE.SRGBColorSpace;
         renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
 
-        const asteroid = new THREE.Mesh(
+        body = new THREE.Mesh(
           createAsteroidGeometry(THREE, metrics.size, appearance),
           new THREE.MeshStandardMaterial({
             color: appearance.materialColor,
@@ -59,12 +63,10 @@
             flatShading: true
           })
         );
-        geometry = asteroid.geometry;
-        material = asteroid.material;
         const spinAxis = new THREE.Vector3(...appearance.spinAxis).normalize();
-        asteroid.position.set(0, 0, 0);
-        asteroid.rotation.set(0.12, -0.24, 0.08);
-        scene.add(asteroid);
+        body.position.set(0, 0, 0);
+        body.rotation.set(0.12, -0.24, 0.08);
+        scene.add(body);
 
         scene.add(new THREE.AmbientLight(0x8994c9, 1.5));
         const keyLight = new THREE.DirectionalLight(0xffffff, 3.2);
@@ -89,6 +91,32 @@
         renderer.render(scene, camera);
         renderStatus = "WEBGL READY";
 
+        if (metrics.mesh) {
+          renderStatus = "LOADING PDS MESH";
+          void import("three/addons/loaders/OBJLoader.js")
+            .then(({ OBJLoader }) => loadMeshTemplate(OBJLoader, metrics.mesh))
+            .then((template) => {
+              if (!template || cancelled) return;
+              const publishedBody = createMeshInstance(
+                THREE,
+                template,
+                appearance,
+                metrics.size
+              );
+              scene.remove(body);
+              disposeObject3D(body);
+              body = publishedBody;
+              body.rotation.set(0.12, -0.24, 0.08);
+              scene.add(body);
+              renderStatus = "PDS MESH READY";
+            })
+            .catch((error) => {
+              if (cancelled) return;
+              renderStatus = "PROCEDURAL FALLBACK";
+              console.warn("NEO Finder PDS preview mesh unavailable", error);
+            });
+        }
+
         let previousTime = performance.now();
         const animate = (timestamp) => {
           if (cancelled) return;
@@ -98,7 +126,7 @@
 
           // The preview is deliberately not an orbital scene. Its origin stays
           // fixed while the asteroid rotates around its own local axes.
-          asteroid.rotateOnAxis(spinAxis, appearance.spin * delta * 60);
+          body.rotateOnAxis(spinAxis, appearance.spin * delta * 60);
           renderer.render(scene, camera);
         };
         frame = requestAnimationFrame(animate);
@@ -114,8 +142,7 @@
       cancelled = true;
       if (frame) cancelAnimationFrame(frame);
       resizeObserver?.disconnect();
-      geometry?.dispose();
-      material?.dispose();
+      disposeObject3D(body);
       renderer?.dispose();
     };
   });

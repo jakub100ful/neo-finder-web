@@ -1,4 +1,5 @@
 import { getNeoMinimumPeriapsisRadius } from "./orbit-model.mjs";
+import { getMeshRecord } from "./pds-mesh.js";
 
 export const NASA_TOKEN_STORAGE_KEY = "neo-finder:nasa-api-token";
 export const PROFILE_STORAGE_KEY = "neo-finder:profile";
@@ -480,7 +481,8 @@ export function getSceneMetrics(neo, index = 0) {
       ? orbit.inclinationRadians
       : Math.min(0.48, Math.max(-0.48, getInclination(neo) / 80)),
     orbit,
-    appearance: getAppearance(neo, index)
+    appearance: getAppearance(neo, index),
+    mesh: getMeshRecord(neo)
   };
 }
 

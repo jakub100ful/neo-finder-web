@@ -3,6 +3,7 @@
   import AsteroidPreview from "../lib/AsteroidPreview.svelte";
   import SpaceScene from "../lib/SpaceScene.svelte";
   import { demoNeos } from "../lib/data/demo-neos.js";
+  import { getMeshRecord, getPdsSearchUrl } from "../lib/pds-mesh.js";
   import {
     LANDMASS_DEFAULTS,
     LANDMASS_STYLES,
@@ -138,6 +139,10 @@
   $: savedIds = new Set(savedNeos.map((neo) => neo.id));
   $: riskCount = savedNeos.filter((neo) => getRisk(neo).tone === "danger").length;
   $: sourceIsDemo = sourceLabel === "LOCAL DEMO";
+
+  function getMeshLabel(neo) {
+    return getMeshRecord(neo) ? "PDS MESH AVAILABLE" : "PROCEDURAL PROFILE";
+  }
 
   onMount(() => {
     const profile = loadLocalJson(PROFILE_STORAGE_KEY, {});
@@ -648,17 +653,19 @@
                     <span>SELECTED NEO</span>
                     <strong>{missionNeo.name}</strong>
                   </div>
-                  <div class="mission-detail-grid">
-                    <div><span>DIAMETER</span><strong>{formatNumber(getDiameterKm(missionNeo), 2)} KM</strong></div>
-                    <div><span>VELOCITY</span><strong>{formatNumber(getSpeedKps(missionNeo), 1)} KM/S</strong></div>
-                    <div><span>MISS DISTANCE</span><strong>{formatDistance(missionNeo)}</strong></div>
-                    <div><span>RISK</span><strong class={getRisk(missionNeo).tone}>{getRisk(missionNeo).label}</strong></div>
+                   <div class="mission-detail-grid">
+                     <div><span>DIAMETER</span><strong>{formatNumber(getDiameterKm(missionNeo), 2)} KM</strong></div>
+                     <div><span>VELOCITY</span><strong>{formatNumber(getSpeedKps(missionNeo), 1)} KM/S</strong></div>
+                     <div><span>MISS DISTANCE</span><strong>{formatDistance(missionNeo)}</strong></div>
+                     <div><span>RISK</span><strong class={getRisk(missionNeo).tone}>{getRisk(missionNeo).label}</strong></div>
                   </div>
                   <p>
-                    {#if missionLoadingId === missionNeo.id}
-                      READING JPL PHYSICAL PROFILE...
-                    {:else if missionNeo.physical}
-                      {missionNeo.physical.spectralClass || "UNCLASSIFIED"} profile // {missionNeo.physical.rotationPeriodHours ? formatNumber(missionNeo.physical.rotationPeriodHours, 1) + " H SPIN" : "ROTATION UNKNOWN"}
+                     {#if missionLoadingId === missionNeo.id}
+                       READING JPL PHYSICAL PROFILE...
+                     {:else if getMeshRecord(missionNeo)}
+                       NASA/JPL NEO VERIFIED // PDS SHAPE MODEL AVAILABLE
+                     {:else if missionNeo.physical}
+                       {missionNeo.physical.spectralClass || "UNCLASSIFIED"} profile // {missionNeo.physical.rotationPeriodHours ? formatNumber(missionNeo.physical.rotationPeriodHours, 1) + " H SPIN" : "ROTATION UNKNOWN"}
                     {:else}
                       NeoWs approach data loaded // JPL physical profile unavailable.
                     {/if}
@@ -752,10 +759,10 @@
                     <span><small>MISS</small><strong>{formatDistance(neo)}</strong></span>
                   </div>
                   <div class="risk-meter"><span style={"width: " + getRiskScore(neo) + "%"}></span></div>
-                </button>
-                <div class="neo-card-footer">
-                  <span>{savedIds.has(neo.id) ? "IN YOUR ORBIT" : getRisk(neo).detail.toUpperCase()}</span>
-                  <button class="add-button" class:added={savedIds.has(neo.id)} disabled={savedIds.has(neo.id) || addingId === neo.id} on:click={() => addNeo(neo)}>
+                 </button>
+                 <div class="neo-card-footer">
+                   <span>{savedIds.has(neo.id) ? "IN YOUR ORBIT" : getMeshLabel(neo)}</span>
+                   <button class="add-button" class:added={savedIds.has(neo.id)} disabled={savedIds.has(neo.id) || addingId === neo.id} on:click={() => addNeo(neo)}>
                     {addingId === neo.id ? "SCANNING" : savedIds.has(neo.id) ? "ADDED" : "ADD +"}
                   </button>
                 </div>
@@ -768,9 +775,9 @@
       <main class="page-content detail-view">
         <button class="back-button" on:click={backFromDetail}>← BACK TO {lastView === "dashboard" ? "DASHBOARD" : "CATALOGUE"}</button>
         {#if selectedNeo}
-          <section class="detail-grid">
-            <div class="detail-scene panel">
-              <div class="panel-header"><span>OBJECT PREVIEW</span><span class="signal"><i></i>{getRisk(selectedNeo).detail.toUpperCase()}</span></div>
+           <section class="detail-grid">
+             <div class="detail-scene panel">
+               <div class="panel-header"><span>OBJECT PREVIEW</span><span class="signal"><i></i>{getMeshLabel(selectedNeo)}</span></div>
               <div class="detail-scene-frame">
                 <AsteroidPreview neo={selectedNeo} />
               </div>
@@ -787,21 +794,23 @@
                 <div><span>INCLINATION</span><strong>{formatNumber(Number(selectedNeo.orbital_data?.inclination), 1)} <small>°</small></strong></div>
                 <div><span>ECCENTRICITY</span><strong>{formatNumber(Number(selectedNeo.orbital_data?.eccentricity), 3)}</strong></div>
               </div>
-              <div class="appearance-note">
-                <div>
-                  <span>APPEARANCE PROFILE</span>
-                  <strong>{selectedNeo.physical?.spectralClass || "PROCEDURAL ROCK"}</strong>
-                </div>
-                <p>
-                  {#if selectedNeo.physical}
-                    JPL physical data is guiding the material and spin.
-                    {#if selectedNeo.physical.rotationPeriodHours}
-                      Rotation period: {formatNumber(selectedNeo.physical.rotationPeriodHours, 1)} hours.
-                    {/if}
-                  {:else}
-                    No published mesh shape is included in the close-approach feed, so a stable procedural profile keeps this object unique.
-                  {/if}
-                </p>
+               <div class="appearance-note">
+                 <div>
+                   <span>APPEARANCE PROFILE</span>
+                   <strong>{getMeshRecord(selectedNeo) ? "NASA PDS MESH" : selectedNeo.physical?.spectralClass || "PROCEDURAL ROCK"}</strong>
+                 </div>
+                 <p>
+                   {#if getMeshRecord(selectedNeo)}
+                     Published {getMeshRecord(selectedNeo).modelType.toLowerCase()} from the NASA Planetary Data System is rendered when the asset is available. The browser keeps a local copy for faster future visits.
+                   {:else if selectedNeo.physical}
+                     JPL physical data is guiding the material and spin.
+                     {#if selectedNeo.physical.rotationPeriodHours}
+                       Rotation period: {formatNumber(selectedNeo.physical.rotationPeriodHours, 1)} hours.
+                     {/if}
+                   {:else}
+                     No PDS mesh is indexed for this object in this build. A stable procedural profile keeps it visible; this is not proof that no shape model exists anywhere in PDS.
+                   {/if}
+                 </p>
               </div>
               {#if selectedNeo.physical}
                 <div class="detail-record-grid">
@@ -819,7 +828,14 @@
                 </button>
                 <a class="ghost-button link-button" href={selectedNeo.nasa_jpl_url} target="_blank" rel="noreferrer">OPEN NASA RECORD ↗</a>
               </div>
-              <div class="detail-source">CLOSE APPROACH // {formatDate(getApproach(selectedNeo).close_approach_date)} // EARTH</div>
+               <div class="detail-source">
+                 CLOSE APPROACH // {formatDate(getApproach(selectedNeo).close_approach_date)} // EARTH //
+                 {#if getMeshRecord(selectedNeo)}
+                   <a href={getMeshRecord(selectedNeo).pdsRecordUrl} target="_blank" rel="noreferrer">PDS MODEL ↗</a>
+                 {:else}
+                   <a href={getPdsSearchUrl(selectedNeo)} target="_blank" rel="noreferrer">SEARCH PDS ↗</a>
+                 {/if}
+               </div>
             </div>
           </section>
         {/if}
