@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import AsteroidPreview from "../lib/AsteroidPreview.svelte";
   import DiscoverPage from "../lib/DiscoverPage.svelte";
+  import PdsCataloguePage from "../lib/PdsCataloguePage.svelte";
   import SpaceScene from "../lib/SpaceScene.svelte";
   import { demoNeos } from "../lib/data/demo-neos.js";
   import { getMeshRecord, getPdsSearchUrl } from "../lib/pds-mesh.js";
@@ -284,6 +285,11 @@
     view = "discover";
   }
 
+  function openPdsCatalogue() {
+    lastView = view;
+    view = "pds-catalogue";
+  }
+
   function openDateEditor(returnView = view) {
     dateReturnView = returnView || "dashboard";
     dateDraft = activeDate;
@@ -366,6 +372,7 @@
   function getViewLabel(currentView) {
     if (currentView === "dashboard") return "DASHBOARD";
     if (currentView === "discover") return "DISCOVER";
+    if (currentView === "pds-catalogue") return "PDS CATALOGUE";
     return "CATALOGUE";
   }
 
@@ -587,6 +594,7 @@
         <button class:active={view === "dashboard"} on:click={() => (view = "dashboard")}>DASHBOARD</button>
         <button class:active={view === "catalogue"} on:click={openCatalogue}>CATALOGUE <span>{neoList.length}</span></button>
         <button class:active={view === "discover"} on:click={openDiscover}>DISCOVER</button>
+        <button class:active={view === "pds-catalogue"} on:click={openPdsCatalogue}>PDS CATALOGUE</button>
         <button class:active={view === "settings"} on:click={openSettings}>CUSTOMISE</button>
         <button class:active={view === "about"} on:click={openAbout}>ABOUT <span>i</span></button>
       </nav>
@@ -786,6 +794,8 @@
       </main>
     {:else if view === "discover"}
       <DiscoverPage on:openDetail={(event) => openDetail(event.detail)} on:addNeo={(event) => addNeo(event.detail)} />
+    {:else if view === "pds-catalogue"}
+      <PdsCataloguePage on:openDetail={(event) => openDetail(event.detail)} on:back={() => (view = lastView || "catalogue")} />
     {:else if view === "detail"}
       <main class="page-content detail-view">
         <button class="back-button" on:click={backFromDetail}>← BACK TO {getViewLabel(lastView)}</button>

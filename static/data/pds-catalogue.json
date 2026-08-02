@@ -1,0 +1,115 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-08-02T00:00:00.000Z",
+  "source": "NASA PDS Search API + verified local PDS mesh manifest",
+  "queryScope": {
+    "keywords": [
+      "asteroid shape model",
+      "radar shape model",
+      "small body shape model"
+    ],
+    "exactTargets": ["(99942) Apophis", "(1620) Geographos"],
+    "hierarchy": ["members", "member-of", "member-of/member-of"],
+    "pagination": "search-after"
+  },
+  "sourceUrls": [
+    "https://pds.nasa.gov/api/search/1/products",
+    "https://pds.nasa.gov/ds-view/pds/viewProfile.jsp?dsid=EAR-A-5-DDR-RADARSHAPE-MODELS-V2.0"
+  ],
+  "records": [
+    {
+      "id": "apophis-v1",
+      "canonicalId": "spk:20099942",
+      "aliases": [
+        "20099942",
+        "2099942",
+        "99942",
+        "99942APOPHIS",
+        "2004MN4",
+        "APOPHIS"
+      ],
+      "neo": {
+        "id": "2099942",
+        "neo_reference_id": "2099942",
+        "jplSpkId": "20099942",
+        "spkid": "20099942",
+        "pdes": "2004 MN4",
+        "name": "(99942) Apophis",
+        "full_name": "(99942) Apophis",
+        "aliases": [
+          "20099942",
+          "2099942",
+          "99942",
+          "2004 MN4",
+          "Apophis"
+        ],
+        "is_potentially_hazardous_asteroid": true,
+        "isNeo": true,
+        "physical": {}
+      },
+      "pds": {
+        "status": "render-ready",
+        "lid": "urn:nasa:pds:gbo.ast-apophis.jpl.radar.shape_model",
+        "lidvid": "urn:nasa:pds:gbo.ast-apophis.jpl.radar.shape_model::1.0",
+        "bundleName": "Apophis radar-derived shape model",
+        "collectionName": "Small Bodies Node // Shape Models",
+        "productName": "RADAR-DERIVED SHAPE MODEL",
+        "productType": "RADAR-DERIVED SHAPE MODEL",
+        "targetName": "(99942) Apophis",
+        "format": "obj",
+        "units": "km",
+        "geometryFile": "apophis_v233s7.obj",
+        "vertexCount": null,
+        "facetCount": null,
+        "recordUrl": "https://pds.nasa.gov/ds-view/pds/viewBundle.jsp?identifier=urn%3Anasa%3Apds%3Agbo.ast-apophis.jpl.radar.shape_model&version=1.0",
+        "downloadUrl": "https://sbnarchive.psi.edu/pds4/non_mission/gbo.ast-apophis.jpl.radar.shape_model_v1.0.zip",
+        "assetUrl": "/models/neos/apophis_v233s7.obj",
+        "doi": "10.26033/ydyq-5756",
+        "source": "NASA Planetary Data System // Small Bodies Node",
+        "provenance": "Validated local renderer asset",
+        "isShapeRelated": true
+      }
+    },
+    {
+      "id": "geographos-radar-v2",
+      "canonicalId": "spk:2001620",
+      "aliases": ["2001620", "1620", "GEOGRAPHOS"],
+      "neo": {
+        "id": "1620",
+        "neo_reference_id": "1620",
+        "jplSpkId": "2001620",
+        "spkid": "2001620",
+        "pdes": "1620",
+        "name": "(1620) Geographos",
+        "full_name": "(1620) Geographos",
+        "aliases": ["2001620", "1620", "Geographos"],
+        "is_potentially_hazardous_asteroid": null,
+        "isNeo": true,
+        "physical": {}
+      },
+      "pds": {
+        "status": "needs-conversion",
+        "lid": "EAR-A-5-DDR-RADARSHAPE-MODELS-V2.0",
+        "lidvid": "EAR-A-5-DDR-RADARSHAPE-MODELS-V2.0",
+        "bundleName": "SMALL BODY RADAR SHAPE MODELS V2.0",
+        "collectionName": "NASA PDS Small Bodies Node // Legacy archive profile",
+        "productName": "Geographos polyhedral radar shape model",
+        "productType": "RADAR-DERIVED SHAPE MODEL",
+        "targetName": "(1620) Geographos",
+        "format": "tab",
+        "units": "km",
+        "geometryFile": "geographos.tab",
+        "vertexCount": null,
+        "facetCount": null,
+        "recordUrl": "https://pds.nasa.gov/ds-view/pds/viewProfile.jsp?dsid=EAR-A-5-DDR-RADARSHAPE-MODELS-V2.0",
+        "downloadUrl": "",
+        "assetUrl": "",
+        "doi": "",
+        "source": "NASA Planetary Data System // Small Bodies Node",
+        "provenance": "Official archive profile lists 1620 Geographos; source geometry has not been converted into a local renderer asset.",
+        "conversionRequired": true,
+        "isShapeRelated": true
+      }
+    }
+  ]
+}

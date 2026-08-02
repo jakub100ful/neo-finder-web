@@ -179,7 +179,7 @@
     <div class="discover-filters">
       <label class="discover-toggle">
         <input type="checkbox" bind:checked={meshOnly} />
-        <span>PDS MESH ONLY</span>
+        <span>RENDER-READY MESH ONLY</span>
       </label>
       <label class="discover-toggle">
         <input type="checkbox" bind:checked={phaOnly} />
