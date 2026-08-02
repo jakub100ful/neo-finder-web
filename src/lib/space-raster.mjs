@@ -348,11 +348,12 @@ function getDisplayNeoPosition(neo, phase) {
   const displayRadius = 25 + Math.max(0, Number(neo.radius) - 19) * 0.55;
   return getNeoOrbitPosition({
     radius: displayRadius,
-    inclination: neo.inclination
+    inclination: neo.inclination,
+    orbit: neo.orbit
   }, phase);
 }
 
-function drawOrbit(ctx, radius, inclination, view, width, height, color, opacity) {
+function drawOrbit(ctx, radius, inclination, orbit, view, width, height, color, opacity) {
   ctx.save();
   ctx.strokeStyle = color;
   ctx.globalAlpha = opacity;
@@ -361,11 +362,7 @@ function drawOrbit(ctx, radius, inclination, view, width, height, color, opacity
   let started = false;
   for (let index = 0; index <= 96; index += 1) {
     const phase = (index / 96) * TWO_PI;
-    const position = {
-      x: Math.cos(phase) * radius,
-      y: Math.sin(phase) * radius * inclination,
-      z: Math.sin(phase) * radius
-    };
+    const position = getNeoOrbitPosition({ radius, inclination, orbit }, phase);
     const projected = projectToCanvas(position, view, width, height);
     if (!projected.visible) {
       started = false;
@@ -564,6 +561,7 @@ export function createSoftwareScene(canvas) {
       context,
       EARTH_RADIUS_SCENE * 1.65,
       0.12,
+      null,
       view,
       width,
       height,
@@ -575,6 +573,7 @@ export function createSoftwareScene(canvas) {
         context,
         25 + Math.max(0, Number(neo.radius) - 19) * 0.55,
         neo.inclination,
+        neo.orbit,
         view,
         width,
         height,

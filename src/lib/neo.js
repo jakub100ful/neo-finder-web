@@ -3,8 +3,11 @@ export const PROFILE_STORAGE_KEY = "neo-finder:profile";
 export const FAVOURITES_STORAGE_KEY = "neo-finder:favourites";
 
 const NASA_FEED_URL = "https://api.nasa.gov/neo/rest/v1/feed";
+const NASA_LOOKUP_URL = "https://api.nasa.gov/neo/rest/v1/neo";
 const physicalProfileCache = new Map();
 const physicalProfileRequests = new Map();
+const orbitalProfileCache = new Map();
+const orbitalProfileRequests = new Map();
 
 function readBoolean(value, fallback) {
   if (value === undefined || value === null || value === "") return fallback;
@@ -75,6 +78,34 @@ export async function fetchNeoFeed(date, apiKey) {
   });
 }
 
+export async function fetchNeoOrbitData(neo, apiKey) {
+  const neoId = String(neo?.id || "");
+  if (!/^\d+$/.test(neoId)) return null;
+
+  if (orbitalProfileCache.has(neoId)) return orbitalProfileCache.get(neoId);
+  if (orbitalProfileRequests.has(neoId)) return orbitalProfileRequests.get(neoId);
+
+  const request = (async () => {
+    const query = new URLSearchParams({ api_key: apiKey || "DEMO_KEY" });
+    const response = await fetch(
+      NASA_LOOKUP_URL + "/" + encodeURIComponent(neoId) + "?" + query.toString()
+    );
+    if (!response.ok) return null;
+
+    const payload = await response.json();
+    const orbitalData = payload.orbital_data || null;
+    orbitalProfileCache.set(neoId, orbitalData);
+    return orbitalData;
+  })();
+
+  orbitalProfileRequests.set(neoId, request);
+  try {
+    return await request;
+  } finally {
+    orbitalProfileRequests.delete(neoId);
+  }
+}
+
 export async function fetchPhysicalProfile(neo) {
   const spkId = String(neo?.id || "");
   if (!/^\d+$/.test(spkId)) return null;
@@ -86,7 +117,6 @@ export async function fetchPhysicalProfile(neo) {
     const query = new URLSearchParams({
       spk: spkId,
       "phys-par": "1",
-      "no-orbit": "1",
       "anc-data": "1",
       discovery: "1"
     });
@@ -101,7 +131,12 @@ export async function fetchPhysicalProfile(neo) {
         .filter((item) => item?.name)
         .map((item) => [item.name, item])
     );
-    if (!records.size) return null;
+    const orbitElements = new Map(
+      (payload.orbit?.elements || [])
+        .filter((item) => item?.name)
+        .map((item) => [item.name, item])
+    );
+    if (!records.size && !orbitElements.size) return null;
 
     const value = (...names) => {
       for (const name of names) {
@@ -115,6 +150,28 @@ export async function fetchPhysicalProfile(neo) {
       bv: numeric(value("BV")),
       ub: numeric(value("UB")),
       ir: numeric(value("IR"))
+    };
+    const orbitalValue = (...names) => {
+      for (const name of names) {
+        const candidate = orbitElements.get(name)?.value;
+        if (candidate !== undefined && candidate !== null && candidate !== "") return candidate;
+      }
+      return "";
+    };
+    const orbitalData = {
+      orbit_id: payload.orbit?.orbit_id || "",
+      epoch_osculation: payload.orbit?.epoch || "",
+      eccentricity: orbitalValue("e"),
+      semi_major_axis: orbitalValue("a"),
+      perihelion_distance: orbitalValue("q"),
+      inclination: orbitalValue("i"),
+      ascending_node_longitude: orbitalValue("om"),
+      perihelion_argument: orbitalValue("w"),
+      mean_anomaly: orbitalValue("ma"),
+      perihelion_time: orbitalValue("tp"),
+      orbital_period: orbitalValue("per"),
+      mean_motion: orbitalValue("n"),
+      aphelion_distance: orbitalValue("ad")
     };
     const profile = {
       source: "NASA/JPL SBDB",
@@ -138,6 +195,7 @@ export async function fetchPhysicalProfile(neo) {
       smassClass: String(value("spec_B") || "").toUpperCase(),
       orbitClass: payload.object?.orbit_class?.name || "",
       orbitClassCode: payload.object?.orbit_class?.code || "",
+      orbitalData,
       observationsUsed: numeric(payload.orbit?.n_obs_used),
       dataArcDays: numeric(payload.orbit?.data_arc),
       orbitUncertainty: payload.orbit?.condition_code || "",
@@ -285,7 +343,7 @@ function degreesToRadians(value) {
 export function getOrbitalProfile(neo) {
   const orbital = neo?.orbital_data || {};
   return {
-    eccentricity: Math.min(0.75, Math.max(0, numeric(orbital.eccentricity))),
+    eccentricity: Math.min(0.999999, Math.max(0, numeric(orbital.eccentricity))),
     inclinationRadians: degreesToRadians(orbital.inclination),
     ascendingNodeRadians: degreesToRadians(orbital.ascending_node_longitude),
     argumentOfPeriapsisRadians: degreesToRadians(orbital.perihelion_argument),
@@ -295,6 +353,7 @@ export function getOrbitalProfile(neo) {
     epochOsculation: numeric(orbital.epoch_osculation),
     hasElements: [
       orbital.eccentricity,
+      orbital.inclination,
       orbital.ascending_node_longitude,
       orbital.perihelion_argument,
       orbital.mean_anomaly
@@ -410,7 +469,9 @@ export function getSceneMetrics(neo, index = 0) {
     size: Math.min(3.8, Math.max(0.7, 0.55 + Math.log10(Math.max(diameter, 0.01) + 1) * 1.5)),
     speed: Math.min(1.6, Math.max(0.24, speed / 20)),
     phase: (index * 1.43 + orbit.meanAnomalyRadians) % (Math.PI * 2),
-    inclination: Math.min(0.48, Math.max(-0.48, getInclination(neo) / 80)),
+    inclination: orbit.hasElements
+      ? orbit.inclinationRadians
+      : Math.min(0.48, Math.max(-0.48, getInclination(neo) / 80)),
     orbit,
     appearance: getAppearance(neo, index)
   };

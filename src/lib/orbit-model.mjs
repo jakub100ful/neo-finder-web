@@ -25,37 +25,65 @@ export function getMoonRelativePosition(phase = 0) {
   };
 }
 
+function wrapAngle(angle) {
+  const wrapped = angle % (Math.PI * 2);
+  return wrapped > Math.PI ? wrapped - Math.PI * 2 : wrapped < -Math.PI ? wrapped + Math.PI * 2 : wrapped;
+}
+
+export function solveKeplerEquation(meanAnomaly, eccentricity) {
+  const e = Math.min(0.999999, Math.max(0, Number(eccentricity) || 0));
+  const mean = wrapAngle(Number(meanAnomaly) || 0);
+  if (e === 0) return mean;
+
+  let eccentricAnomaly = e < 0.8 ? mean : Math.PI * Math.sign(mean || 1);
+  for (let iteration = 0; iteration < 12; iteration += 1) {
+    const correction =
+      (eccentricAnomaly - e * Math.sin(eccentricAnomaly) - mean) /
+      (1 - e * Math.cos(eccentricAnomaly));
+    eccentricAnomaly -= correction;
+    if (Math.abs(correction) < 1e-10) break;
+  }
+  return eccentricAnomaly;
+}
+
 export function getNeoOrbitPosition(metrics, phase = metrics?.phase ?? 0) {
   const radius = Number(metrics?.radius) || 0;
-  const inclination = Number(metrics?.inclination) || 0;
 
-  // When JPL orbital elements are available, treat the scene radius as the
-  // semi-major axis of an elliptical path and orient that path using the
-  // classical elements.  The fallback below intentionally preserves the
-  // compact demo orbit used by older saved objects without those elements.
+  // The display uses the same scene radius as the semi-major axis for every
+  // NEO. That keeps the app's compressed miss-distance scale consistent while
+  // eccentricity changes the periapsis/apoapsis around that shared baseline.
   const orbit = metrics?.orbit;
   if (orbit?.hasElements) {
-    const eccentricity = Math.min(0.75, Math.max(0, Number(orbit.eccentricity) || 0));
+    const eccentricity = Math.min(0.999999, Math.max(0, Number(orbit.eccentricity) || 0));
     const semiMinor = radius * Math.sqrt(1 - eccentricity ** 2);
-    const eccentricAnomaly = Number.isFinite(phase) ? phase : 0;
-    const localX = radius * (Math.cos(eccentricAnomaly) - eccentricity);
-    const localZ = semiMinor * Math.sin(eccentricAnomaly);
+    const eccentricAnomaly = solveKeplerEquation(phase, eccentricity);
+    const xPrime = radius * (Math.cos(eccentricAnomaly) - eccentricity);
+    const yPrime = semiMinor * Math.sin(eccentricAnomaly);
     const argument = Number(orbit.argumentOfPeriapsisRadians) || 0;
     const node = Number(orbit.ascendingNodeRadians) || 0;
-    const tilt = Number(orbit.inclinationRadians) || 0;
+    const inclination = Number(orbit.inclinationRadians) || 0;
+    const cosArgument = Math.cos(argument);
+    const sinArgument = Math.sin(argument);
+    const cosNode = Math.cos(node);
+    const sinNode = Math.sin(node);
+    const cosInclination = Math.cos(inclination);
+    const sinInclination = Math.sin(inclination);
 
-    const periapsisX = localX * Math.cos(argument) - localZ * Math.sin(argument);
-    const periapsisZ = localX * Math.sin(argument) + localZ * Math.cos(argument);
-    const tiltedY = -periapsisZ * Math.sin(tilt);
-    const tiltedZ = periapsisZ * Math.cos(tilt);
-
+    // JPL's ecliptic coordinates use x/y in the orbital plane and z normal to
+    // it. The scene uses x/z as its presentation plane, so ecliptic z maps to
+    // scene y and ecliptic y maps to scene z.
     return {
-      x: periapsisX * Math.cos(node) + tiltedZ * Math.sin(node),
-      y: tiltedY,
-      z: -periapsisX * Math.sin(node) + tiltedZ * Math.cos(node)
+      x:
+        (cosArgument * cosNode - sinArgument * sinNode * cosInclination) * xPrime +
+        (-sinArgument * cosNode - cosArgument * sinNode * cosInclination) * yPrime,
+      y: sinArgument * sinInclination * xPrime + cosArgument * sinInclination * yPrime,
+      z:
+        (cosArgument * sinNode + sinArgument * cosNode * cosInclination) * xPrime +
+        (-sinArgument * sinNode + cosArgument * cosNode * cosInclination) * yPrime
     };
   }
 
+  const inclination = Number(metrics?.inclination) || 0;
   return {
     x: Math.cos(phase) * radius,
     y: Math.sin(phase) * radius * inclination,

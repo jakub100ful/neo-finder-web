@@ -14,6 +14,7 @@
     PROFILE_STORAGE_KEY,
     featureFlags,
     fetchNeoFeed,
+    fetchNeoOrbitData,
     formatDate,
     formatDistance,
     formatNumber,
@@ -162,6 +163,9 @@
     token = getStoredNasaToken();
     tokenDraft = token;
     hydrated = true;
+    if (savedNeos.length) {
+      void Promise.all(savedNeos.slice(0, 8).map((neo) => enrichNeo(neo)));
+    }
   });
 
   function persistProfile() {
@@ -285,12 +289,41 @@
   }
 
   async function enrichNeo(neo) {
-    if (!neo || neo.physical || !featureFlags.liveJplData) return neo;
+    const hasOrbit = Boolean(
+      neo?.orbital_data &&
+      (neo.orbital_data.eccentricity !== undefined || neo.orbital_data.inclination !== undefined)
+    );
+    if (!neo || (neo.physical && hasOrbit)) return neo;
+    if (!featureFlags.liveNasaData && !featureFlags.liveJplData) return neo;
 
     try {
-      const physical = await fetchPhysicalProfile(neo);
-      if (!physical) return neo;
-      const enrichedNeo = { ...neo, physical };
+      const [orbitalData, physical] = await Promise.all([
+        featureFlags.liveNasaData
+          ? fetchNeoOrbitData(neo, token || "DEMO_KEY").catch((error) => {
+              console.warn("NASA orbital profile unavailable", error);
+              return null;
+            })
+          : Promise.resolve(null),
+        featureFlags.liveJplData
+          ? fetchPhysicalProfile(neo).catch((error) => {
+              console.warn("JPL physical profile unavailable", error);
+              return null;
+            })
+          : Promise.resolve(null)
+      ]);
+      const fallbackOrbitalData = physical?.orbitalData &&
+        (physical.orbitalData.eccentricity || physical.orbitalData.inclination)
+        ? physical.orbitalData
+        : null;
+      const resolvedOrbitalData = orbitalData || fallbackOrbitalData;
+      if (!resolvedOrbitalData && !physical) return neo;
+      const enrichedNeo = {
+        ...neo,
+        ...(resolvedOrbitalData
+          ? { orbital_data: { ...(neo.orbital_data || {}), ...resolvedOrbitalData } }
+          : {}),
+        ...(physical ? { physical } : {})
+      };
       neoList = neoList.map((item) => (item.id === neo.id ? enrichedNeo : item));
       if (savedNeos.some((item) => item.id === neo.id)) {
         savedNeos = savedNeos.map((item) => (item.id === neo.id ? enrichedNeo : item));
@@ -751,6 +784,7 @@
                 <div><span>RELATIVE SPEED</span><strong>{formatNumber(getSpeedKps(selectedNeo), 2)} <small>KM/S</small></strong></div>
                 <div><span>MISS DISTANCE</span><strong>{formatDistance(selectedNeo)}</strong></div>
                 <div><span>INCLINATION</span><strong>{formatNumber(Number(selectedNeo.orbital_data?.inclination), 1)} <small>°</small></strong></div>
+                <div><span>ECCENTRICITY</span><strong>{formatNumber(Number(selectedNeo.orbital_data?.eccentricity), 3)}</strong></div>
               </div>
               <div class="appearance-note">
                 <div>

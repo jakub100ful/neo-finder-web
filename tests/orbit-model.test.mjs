@@ -13,6 +13,7 @@ import {
   getMoonRelativePosition,
   getNeoOrbitPosition,
   getOrbitalRenderState,
+  solveKeplerEquation,
   getZoomBounds,
   getZoomScale
 } from "../src/lib/orbit-model.mjs";
@@ -29,7 +30,7 @@ import {
   shadeSurface
 } from "../src/lib/space-raster.mjs";
 import { createAsteroidGeometry } from "../src/lib/asteroid-geometry.mjs";
-import { getAppearance, getSceneMetrics } from "../src/lib/neo.js";
+import { fetchNeoOrbitData, getAppearance, getSceneMetrics } from "../src/lib/neo.js";
 
 const nearlyEqual = (actual, expected, tolerance = 1e-6) => {
   assert.ok(Math.abs(actual - expected) <= tolerance, `${actual} is not within ${tolerance} of ${expected}`);
@@ -128,6 +129,99 @@ test("orbital elements produce an eccentric, tilted scene path", () => {
   assert.ok(distance(apoapsis) > distance(periapsis));
   assert.notEqual(periapsis.y, 0);
   assert.notEqual(periapsis.x, metrics.radius);
+});
+
+test("mean anomaly is converted to eccentric anomaly and preserves the shared scale", () => {
+  const radius = 30;
+  const eccentricity = 0.82;
+  const inclination = Math.PI / 6;
+  const orbit = {
+    hasElements: true,
+    eccentricity,
+    inclinationRadians: inclination,
+    ascendingNodeRadians: 0,
+    argumentOfPeriapsisRadians: 0
+  };
+  const periapsis = getNeoOrbitPosition({ radius, orbit }, 0);
+  const apoapsis = getNeoOrbitPosition({ radius, orbit }, Math.PI);
+  const quadrature = getNeoOrbitPosition({ radius, orbit }, Math.PI / 2);
+  const eccentricAnomaly = solveKeplerEquation(Math.PI / 2, eccentricity);
+
+  nearlyEqual(
+    eccentricAnomaly - eccentricity * Math.sin(eccentricAnomaly),
+    Math.PI / 2,
+    1e-9
+  );
+  nearlyEqual(Math.hypot(periapsis.x, periapsis.y, periapsis.z), radius * (1 - eccentricity));
+  nearlyEqual(Math.hypot(apoapsis.x, apoapsis.y, apoapsis.z), radius * (1 + eccentricity));
+  nearlyEqual(quadrature.y / quadrature.z, Math.tan(inclination), 1e-6);
+});
+
+test("the software fallback consumes the same orbital profile as WebGL", async () => {
+  const source = await readFile(new URL("../src/lib/space-raster.mjs", import.meta.url), "utf8");
+
+  for (const marker of [
+    "orbit: neo.orbit",
+    "function drawOrbit(ctx, radius, inclination, orbit",
+    "getNeoOrbitPosition({ radius, inclination, orbit }, phase)"
+  ]) {
+    assert.ok(source.includes(marker), `missing shared fallback orbit marker: ${marker}`);
+  }
+});
+
+test("NEOs with different orbital elements keep one shared scene-radius mapping", () => {
+  const makeNeo = (eccentricity, inclination) => ({
+    estimated_diameter: {
+      kilometers: { estimated_diameter_min: 1, estimated_diameter_max: 1 }
+    },
+    close_approach_data: [{
+      relative_velocity: { kilometers_per_second: "12" },
+      miss_distance: { kilometers: "12000000" }
+    }],
+    orbital_data: {
+      eccentricity: String(eccentricity),
+      inclination: String(inclination),
+      ascending_node_longitude: "25",
+      perihelion_argument: "40",
+      mean_anomaly: "10"
+    }
+  });
+  const lowE = getSceneMetrics(makeNeo(0.05, 2), 0);
+  const highE = getSceneMetrics(makeNeo(0.82, 42), 1);
+
+  nearlyEqual(lowE.radius, highE.radius);
+  assert.equal(lowE.orbit.eccentricity, 0.05);
+  assert.equal(highE.orbit.eccentricity, 0.82);
+  assert.ok(highE.orbit.inclinationRadians > lowE.orbit.inclinationRadians);
+});
+
+test("NASA lookup data restores orbital elements omitted by the feed", async () => {
+  const originalFetch = globalThis.fetch;
+  let requestedUrl = "";
+  globalThis.fetch = async (url) => {
+    requestedUrl = String(url);
+    return {
+      ok: true,
+      async json() {
+        return {
+          orbital_data: {
+            eccentricity: "0.82",
+            inclination: "42"
+          }
+        };
+      }
+    };
+  };
+
+  try {
+    const orbitalData = await fetchNeoOrbitData({ id: "987654321" }, "TEST_KEY");
+    assert.match(requestedUrl, /\/neo\/987654321\?/);
+    assert.match(requestedUrl, /api_key=TEST_KEY/);
+    assert.equal(orbitalData.eccentricity, "0.82");
+    assert.equal(orbitalData.inclination, "42");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 test("physical geometry creates an asymmetric, colored polygon surface", async () => {
