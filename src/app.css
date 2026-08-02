@@ -803,6 +803,86 @@ input[type="date"] {
   min-height: 16rem;
 }
 
+.mission-back-button {
+  padding: 0;
+  color: var(--cyan);
+  font-size: 0.52rem;
+  letter-spacing: 0.08em;
+}
+
+.mission-back-button:hover {
+  color: var(--pink);
+}
+
+.mission-detail {
+  display: grid;
+  gap: 1rem;
+  padding: 1rem;
+}
+
+.mission-detail-heading {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.mission-detail-heading span,
+.mission-detail-grid span {
+  color: var(--muted);
+  font-size: 0.53rem;
+  letter-spacing: 0.11em;
+}
+
+.mission-detail-heading strong {
+  overflow: hidden;
+  color: #e8e4f7;
+  font-family: Arcade, monospace;
+  font-size: 0.78rem;
+  font-weight: 400;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mission-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  border-top: 1px solid rgba(151, 146, 206, 0.16);
+  border-left: 1px solid rgba(151, 146, 206, 0.16);
+}
+
+.mission-detail-grid div {
+  display: grid;
+  gap: 0.35rem;
+  min-width: 0;
+  padding: 0.55rem;
+  border-right: 1px solid rgba(151, 146, 206, 0.16);
+  border-bottom: 1px solid rgba(151, 146, 206, 0.16);
+}
+
+.mission-detail-grid strong {
+  overflow: hidden;
+  color: var(--cyan);
+  font-family: Arcade, monospace;
+  font-size: 0.62rem;
+  font-weight: 400;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mission-detail-grid strong.warn {
+  color: var(--yellow);
+}
+
+.mission-detail-grid strong.danger {
+  color: var(--danger);
+}
+
+.mission-detail p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.62rem;
+  line-height: 1.55;
+}
+
 .saved-list {
   padding: 0.35rem 0.9rem 0.65rem;
 }
@@ -1363,6 +1443,47 @@ input[type="date"] {
   color: var(--muted);
   font-size: 0.64rem;
   line-height: 1.55;
+}
+
+.detail-record-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin: 0 0 1.5rem;
+  border-top: 1px solid var(--line);
+  border-left: 1px solid var(--line);
+}
+
+.detail-record-grid div {
+  display: grid;
+  gap: 0.35rem;
+  min-width: 0;
+  min-height: 4.2rem;
+  padding: 0.7rem;
+  border-right: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+
+.detail-record-grid span {
+  color: var(--muted);
+  font-size: 0.54rem;
+  letter-spacing: 0.1em;
+}
+
+.detail-record-grid strong {
+  align-self: end;
+  overflow: hidden;
+  color: var(--cyan);
+  font-family: Arcade, monospace;
+  font-size: 0.7rem;
+  font-weight: 400;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.detail-record-grid strong small {
+  color: var(--muted);
+  font-family: "Courier New", monospace;
+  font-size: 0.52rem;
 }
 
 .detail-actions {

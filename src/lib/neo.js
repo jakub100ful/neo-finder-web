@@ -3,15 +3,20 @@ export const PROFILE_STORAGE_KEY = "neo-finder:profile";
 export const FAVOURITES_STORAGE_KEY = "neo-finder:favourites";
 
 const NASA_FEED_URL = "https://api.nasa.gov/neo/rest/v1/feed";
+const physicalProfileCache = new Map();
+const physicalProfileRequests = new Map();
 
 function readBoolean(value, fallback) {
   if (value === undefined || value === null || value === "") return fallback;
   return String(value).toLowerCase() === "true";
 }
 
+const runtimeEnv = import.meta.env || {};
+
 export const featureFlags = {
-  requireNasaToken: readBoolean(import.meta.env.VITE_REQUIRE_NASA_TOKEN, false),
-  liveNasaData: readBoolean(import.meta.env.VITE_ENABLE_LIVE_NASA_DATA, true)
+  requireNasaToken: readBoolean(runtimeEnv.VITE_REQUIRE_NASA_TOKEN, false),
+  liveNasaData: readBoolean(runtimeEnv.VITE_ENABLE_LIVE_NASA_DATA, true),
+  liveJplData: readBoolean(runtimeEnv.VITE_ENABLE_LIVE_JPL_DATA, true)
 };
 
 export function getStoredNasaToken() {
@@ -74,31 +79,83 @@ export async function fetchPhysicalProfile(neo) {
   const spkId = String(neo?.id || "");
   if (!/^\d+$/.test(spkId)) return null;
 
-  const query = new URLSearchParams({
-    spk: spkId,
-    "phys-par": "1",
-    "no-orbit": "1"
-  });
-  const response = await fetch(
-    "https://ssd-api.jpl.nasa.gov/sbdb.api?" + query.toString()
-  );
-  if (!response.ok) return null;
+  if (physicalProfileCache.has(spkId)) return physicalProfileCache.get(spkId);
+  if (physicalProfileRequests.has(spkId)) return physicalProfileRequests.get(spkId);
 
-  const payload = await response.json();
-  const values = Object.fromEntries(
-    (payload.phys_par || [])
-      .filter((item) => item?.name)
-      .map((item) => [item.name, item.value])
-  );
-  if (!Object.keys(values).length) return null;
+  const request = (async () => {
+    const query = new URLSearchParams({
+      spk: spkId,
+      "phys-par": "1",
+      "no-orbit": "1",
+      "anc-data": "1",
+      discovery: "1"
+    });
+    const response = await fetch(
+      "https://ssd-api.jpl.nasa.gov/sbdb.api?" + query.toString()
+    );
+    if (!response.ok) return null;
 
-  return {
-    absoluteMagnitude: numeric(values.H),
-    albedo: numeric(values.albedo),
-    rotationPeriodHours: numeric(values.rot_per),
-    spectralClass: values.spec_T || values.spec_B || "",
-    diameterKm: numeric(values.diameter)
-  };
+    const payload = await response.json();
+    const records = new Map(
+      (payload.phys_par || [])
+        .filter((item) => item?.name)
+        .map((item) => [item.name, item])
+    );
+    if (!records.size) return null;
+
+    const value = (...names) => {
+      for (const name of names) {
+        const candidate = records.get(name)?.value;
+        if (candidate !== undefined && candidate !== null && candidate !== "") return candidate;
+      }
+      return "";
+    };
+    const extent = String(value("extent") || "");
+    const colorIndices = {
+      bv: numeric(value("BV")),
+      ub: numeric(value("UB")),
+      ir: numeric(value("IR"))
+    };
+    const profile = {
+      source: "NASA/JPL SBDB",
+      signatureVersion: payload.signature?.version || "",
+      absoluteMagnitude: numeric(value("H")),
+      absoluteMagnitudeSigma: numeric(records.get("H")?.sigma),
+      magnitudeSlope: numeric(value("G")),
+      albedo: numeric(value("albedo")),
+      diameterKm: numeric(value("diameter")),
+      diameterSigmaKm: numeric(records.get("diameter")?.sigma),
+      extent,
+      extentKm: parseNumericTuple(extent),
+      density: numeric(value("density")),
+      densitySigma: numeric(records.get("density")?.sigma),
+      rotationPeriodHours: numeric(value("rot_per")),
+      pole: String(value("pole") || ""),
+      colorIndices,
+      colorIndexBV: colorIndices.bv,
+      spectralClass: String(value("spec_T", "spec_B") || "").toUpperCase(),
+      tholenClass: String(value("spec_T") || "").toUpperCase(),
+      smassClass: String(value("spec_B") || "").toUpperCase(),
+      orbitClass: payload.object?.orbit_class?.name || "",
+      orbitClassCode: payload.object?.orbit_class?.code || "",
+      observationsUsed: numeric(payload.orbit?.n_obs_used),
+      dataArcDays: numeric(payload.orbit?.data_arc),
+      orbitUncertainty: payload.orbit?.condition_code || "",
+      firstObservationDate: payload.orbit?.first_obs || "",
+      lastObservationDate: payload.orbit?.last_obs || "",
+      discovery: payload.discovery || null,
+      ancillaryData: payload.object?.anc_data || {}
+    };
+    physicalProfileCache.set(spkId, profile);
+    return profile;
+  })();
+
+  physicalProfileRequests.set(spkId, request);
+  try {
+    return await request;
+  } finally {
+    physicalProfileRequests.delete(spkId);
+  }
 }
 
 export function getApproach(neo) {
@@ -108,6 +165,13 @@ export function getApproach(neo) {
 function numeric(value, fallback = 0) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function parseNumericTuple(value) {
+  return String(value || "")
+    .match(/-?\d+(?:\.\d+)?/g)
+    ?.map(Number)
+    .filter(Number.isFinite) || [];
 }
 
 export function getDiameterKm(neo) {
@@ -178,45 +242,159 @@ function shadeHex(hex, factor) {
   return (red << 16) | (green << 8) | blue;
 }
 
+function tintHex(hex, brightness = 1, warmth = 0) {
+  const red = Math.min(255, Math.max(0, Math.round(((hex >> 16) & 255) * brightness + warmth * 255)));
+  const green = Math.min(255, Math.max(0, Math.round(((hex >> 8) & 255) * brightness)));
+  const blue = Math.min(255, Math.max(0, Math.round((hex & 255) * brightness - warmth * 180)));
+  return (red << 16) | (green << 8) | blue;
+}
+
+function normalizeAxisRatios(values, fallback) {
+  const usable = values.length >= 3 && values.slice(0, 3).every((value) => value > 0)
+    ? values.slice(0, 3)
+    : fallback;
+  const geometricMean = Math.cbrt(usable[0] * usable[1] * usable[2]);
+  return usable.map((value) => Math.min(2.4, Math.max(0.45, value / geometricMean)));
+}
+
+function getSpinAxis(pole, seed) {
+  const values = parseNumericTuple(pole);
+  if (values.length >= 2) {
+    const rightAscension = (values[0] * Math.PI) / 180;
+    const declination = (values[1] * Math.PI) / 180;
+    return [
+      Math.cos(declination) * Math.cos(rightAscension),
+      Math.sin(declination),
+      Math.cos(declination) * Math.sin(rightAscension)
+    ];
+  }
+
+  const fallback = [
+    ((seed % 17) - 8) / 10,
+    0.65 + (seed % 23) / 100,
+    ((seed % 29) - 14) / 12
+  ];
+  const length = Math.hypot(...fallback) || 1;
+  return fallback.map((value) => value / length);
+}
+
+function degreesToRadians(value) {
+  return (numeric(value) * Math.PI) / 180;
+}
+
+export function getOrbitalProfile(neo) {
+  const orbital = neo?.orbital_data || {};
+  return {
+    eccentricity: Math.min(0.75, Math.max(0, numeric(orbital.eccentricity))),
+    inclinationRadians: degreesToRadians(orbital.inclination),
+    ascendingNodeRadians: degreesToRadians(orbital.ascending_node_longitude),
+    argumentOfPeriapsisRadians: degreesToRadians(orbital.perihelion_argument),
+    meanAnomalyRadians: degreesToRadians(orbital.mean_anomaly),
+    orbitalPeriodDays: numeric(orbital.orbital_period),
+    meanMotionDegreesPerDay: numeric(orbital.mean_motion),
+    epochOsculation: numeric(orbital.epoch_osculation),
+    hasElements: [
+      orbital.eccentricity,
+      orbital.ascending_node_longitude,
+      orbital.perihelion_argument,
+      orbital.mean_anomaly
+    ].some((value) => value !== undefined && value !== null && value !== "")
+  };
+}
+
 export function getAppearance(neo, index = 0) {
   const physical = neo?.physical || {};
   const spectral = String(physical.spectralClass || "").toUpperCase();
   const albedo = numeric(physical.albedo);
+  const density = numeric(physical.density);
   const seed = stableHash(String(neo?.id || neo?.name || index));
   const choices = ["rocky", "angular", "elongated", "cratered"];
   let shape = choices[seed % choices.length];
   let materialColor = [0x8e8c99, 0x676572, 0xb1a78f, 0x5d7d88][seed % 4];
+  let accentColor = shadeHex(materialColor, 1.28);
+  let baseRoughness = 0.92;
+  let baseMetalness = 0.03;
 
   if (spectral.startsWith("C") || spectral.startsWith("B")) {
     shape = "boulder";
     materialColor = 0x77736a;
+    accentColor = 0x9c9587;
+    baseRoughness = 0.98;
   } else if (spectral.startsWith("S") || spectral.startsWith("Q")) {
     shape = "angular";
     materialColor = 0x9a795f;
+    accentColor = 0xc2a27d;
+    baseRoughness = 0.86;
+  } else if (spectral.startsWith("V")) {
+    shape = "cratered";
+    materialColor = 0x6e6657;
+    accentColor = 0x9a8d70;
+    baseRoughness = 0.9;
   } else if (spectral.startsWith("M") || spectral.startsWith("X")) {
     shape = "metallic";
     materialColor = 0x87949c;
+    accentColor = 0xc3ccd2;
+    baseRoughness = 0.56;
+    baseMetalness = 0.32;
+  } else if (spectral.startsWith("D") || spectral.startsWith("P")) {
+    shape = "elongated";
+    materialColor = 0x76564e;
+    accentColor = 0xa47b68;
+    baseRoughness = 0.96;
   }
 
   if (albedo) {
-    materialColor = shadeHex(materialColor, Math.min(1.35, Math.max(0.68, 0.72 + albedo * 2.2)));
+    const brightness = Math.min(1.35, Math.max(0.68, 0.72 + albedo * 2.2));
+    const colorIndex = numeric(physical.colorIndexBV || physical.colorIndices?.bv);
+    const warmth = colorIndex
+      ? Math.min(0.12, Math.max(-0.08, (colorIndex - 0.7) * 0.3))
+      : 0;
+    materialColor = tintHex(materialColor, brightness, warmth);
+    accentColor = tintHex(accentColor, brightness, warmth);
   }
 
   const period = numeric(physical.rotationPeriodHours);
   const spin = period
     ? Math.min(0.036, Math.max(0.004, 0.03 / period))
     : 0.005 + (seed % 9) * 0.001;
+  const fallbackAxes = {
+    angular: [1, 0.92, 0.84],
+    elongated: [1.45, 0.76, 0.9],
+    cratered: [1.12, 0.86, 1.08],
+    boulder: [1.1, 0.92, 0.86],
+    metallic: [1.08, 1, 0.88],
+    rocky: [1, 0.94, 0.9]
+  }[shape] || [1, 1, 1];
+  const axisRatios = normalizeAxisRatios(
+    physical.extentKm || parseNumericTuple(physical.extent),
+    fallbackAxes
+  );
+  const surfaceRelief = Math.min(
+    0.34,
+    Math.max(
+      0.1,
+      (albedo ? 1 - albedo : 0.72) * 0.22 +
+        (density ? Math.max(0, 3.5 - density) * 0.025 : 0.04)
+    )
+  );
 
   return {
     shape,
     seed,
     materialColor,
-    roughness: spectral.startsWith("M") || spectral.startsWith("X")
-      ? 0.52
-      : albedo
-        ? Math.max(0.7, 1 - albedo * 0.5)
-        : 0.94,
+    accentColor,
+    roughness: albedo
+      ? Math.max(0.7, Math.min(baseRoughness, 1 - albedo * 0.5))
+      : baseRoughness,
+    metalness: baseMetalness + (density > 4 ? 0.12 : 0),
     spin,
+    rotationPeriodHours: period,
+    spinAxis: getSpinAxis(physical.pole, seed),
+    axisRatios,
+    surfaceRelief,
+    craterCount: 3 + (seed % 5),
+    craterDepth: surfaceRelief * 0.7,
+    geometryDetail: physical.extentKm?.length >= 3 || physical.spectralClass ? 2 : 1,
     spectralClass: spectral,
     hasPhysicalProfile: Boolean(spectral || period || physical.albedo)
   };
@@ -226,12 +404,14 @@ export function getSceneMetrics(neo, index = 0) {
   const diameter = getDiameterKm(neo);
   const speed = getSpeedKps(neo);
   const distance = getDistanceKm(neo);
+  const orbit = getOrbitalProfile(neo);
   return {
     radius: Math.min(44, Math.max(19, 17 + Math.log10(Math.max(distance, 1)) * 2.9)),
     size: Math.min(3.8, Math.max(0.7, 0.55 + Math.log10(Math.max(diameter, 0.01) + 1) * 1.5)),
     speed: Math.min(1.6, Math.max(0.24, speed / 20)),
-    phase: (index * 1.43) % (Math.PI * 2),
+    phase: (index * 1.43 + orbit.meanAnomalyRadians) % (Math.PI * 2),
     inclination: Math.min(0.48, Math.max(-0.48, getInclination(neo) / 80)),
+    orbit,
     appearance: getAppearance(neo, index)
   };
 }

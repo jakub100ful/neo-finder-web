@@ -104,6 +104,8 @@
   let neoList = demoNeos;
   let savedNeos = [];
   let selectedNeo = null;
+  let missionNeo = null;
+  let missionLoadingId = "";
   let loading = false;
   let errorMessage = "";
   let sourceLabel = "LOCAL DEMO";
@@ -282,10 +284,33 @@
     factIndex = (factIndex + 1) % educationalFacts.length;
   }
 
+  async function enrichNeo(neo) {
+    if (!neo || neo.physical || !featureFlags.liveJplData) return neo;
+
+    try {
+      const physical = await fetchPhysicalProfile(neo);
+      if (!physical) return neo;
+      const enrichedNeo = { ...neo, physical };
+      neoList = neoList.map((item) => (item.id === neo.id ? enrichedNeo : item));
+      if (savedNeos.some((item) => item.id === neo.id)) {
+        savedNeos = savedNeos.map((item) => (item.id === neo.id ? enrichedNeo : item));
+        persistFavourites();
+      }
+      return enrichedNeo;
+    } catch (error) {
+      console.warn("JPL physical profile unavailable", error);
+      return neo;
+    }
+  }
+
   function openDetail(neo) {
+    missionNeo = null;
     selectedNeo = neo;
     lastView = view;
     view = "detail";
+    void enrichNeo(neo).then((enrichedNeo) => {
+      if (selectedNeo?.id === enrichedNeo?.id) selectedNeo = enrichedNeo;
+    });
   }
 
   function backFromDetail() {
@@ -301,13 +326,7 @@
     }
 
     addingId = neo.id;
-    let enrichedNeo = neo;
-    try {
-      const physical = await fetchPhysicalProfile(neo);
-      if (physical) enrichedNeo = { ...neo, physical };
-    } catch (error) {
-      console.warn("JPL physical profile unavailable", error);
-    }
+    const enrichedNeo = await enrichNeo(neo);
 
     if (!savedIds.has(enrichedNeo.id)) {
       savedNeos = [...savedNeos, enrichedNeo];
@@ -317,6 +336,32 @@
     addingId = "";
     view = "dashboard";
     selectedNeo = null;
+  }
+
+  function openMissionNeo(neo) {
+    missionNeo = neo;
+    missionLoadingId = neo?.id || "";
+    void enrichNeo(neo).then((enrichedNeo) => {
+      if (missionNeo?.id === enrichedNeo?.id) missionNeo = enrichedNeo;
+    }).finally(() => {
+      if (missionNeo?.id === neo?.id) missionLoadingId = "";
+    });
+  }
+
+  function closeMissionNeo() {
+    missionNeo = null;
+    missionLoadingId = "";
+  }
+
+  function openDetailFromMission() {
+    if (!missionNeo) return;
+    const neo = missionNeo;
+    closeMissionNeo();
+    openDetail(neo);
+  }
+
+  function handleSceneNeoSelect(event) {
+    if (event.detail) openMissionNeo(event.detail);
   }
 
   function removeNeo(neo) {
@@ -540,6 +585,7 @@
                 atmosphereColor={atmosphereColor}
                 atmosphereEnabled={atmosphereEnabled}
                 landmassConfig={landmassConfig}
+                on:neoSelect={handleSceneNeoSelect}
               />
               <div class="scene-caption">
                 <span>EARTH // {earthName}</span>
@@ -554,12 +600,42 @@
               <div class="metric-card"><span>PHA FLAGS</span><strong class:danger-number={riskCount > 0}>{riskCount.toString().padStart(2, "0")}</strong></div>
             </div>
             <div class="rail-panel">
-              <div class="panel-header"><span>MISSION LOG</span><span class="panel-index">001</span></div>
-              {#if savedNeos.length}
+              <div class="panel-header">
+                <span>MISSION LOG</span>
+                {#if missionNeo}
+                  <button class="mission-back-button" on:click={closeMissionNeo}>← BACK TO MISSION LOG</button>
+                {:else}
+                  <span class="panel-index">001</span>
+                {/if}
+              </div>
+              {#if missionNeo}
+                <div class="mission-detail" aria-live="polite">
+                  <div class="mission-detail-heading">
+                    <span>SELECTED NEO</span>
+                    <strong>{missionNeo.name}</strong>
+                  </div>
+                  <div class="mission-detail-grid">
+                    <div><span>DIAMETER</span><strong>{formatNumber(getDiameterKm(missionNeo), 2)} KM</strong></div>
+                    <div><span>VELOCITY</span><strong>{formatNumber(getSpeedKps(missionNeo), 1)} KM/S</strong></div>
+                    <div><span>MISS DISTANCE</span><strong>{formatDistance(missionNeo)}</strong></div>
+                    <div><span>RISK</span><strong class={getRisk(missionNeo).tone}>{getRisk(missionNeo).label}</strong></div>
+                  </div>
+                  <p>
+                    {#if missionLoadingId === missionNeo.id}
+                      READING JPL PHYSICAL PROFILE...
+                    {:else if missionNeo.physical}
+                      {missionNeo.physical.spectralClass || "UNCLASSIFIED"} profile // {missionNeo.physical.rotationPeriodHours ? formatNumber(missionNeo.physical.rotationPeriodHours, 1) + " H SPIN" : "ROTATION UNKNOWN"}
+                    {:else}
+                      NeoWs approach data loaded // JPL physical profile unavailable.
+                    {/if}
+                  </p>
+                  <button class="text-link-button" on:click={openDetailFromMission}>SEE MORE →</button>
+                </div>
+              {:else if savedNeos.length}
                 <div class="saved-list">
                   {#each savedNeos as neo (neo.id)}
                     <div class="saved-item">
-                      <button on:click={() => openDetail(neo)}>
+                      <button on:click={() => openMissionNeo(neo)}>
                         <span class="saved-orb"></span>
                         <span><strong>{neo.name}</strong><small>{formatDistance(neo)} // {getSpeedKps(neo).toFixed(1)} KM/S</small></span>
                       </button>
@@ -692,6 +768,16 @@
                   {/if}
                 </p>
               </div>
+              {#if selectedNeo.physical}
+                <div class="detail-record-grid">
+                  <div><span>BODY AXES</span><strong>{selectedNeo.physical.extent || "—"} <small>KM</small></strong></div>
+                  <div><span>ALBEDO</span><strong>{selectedNeo.physical.albedo ? formatNumber(selectedNeo.physical.albedo, 2) : "—"}</strong></div>
+                  <div><span>DENSITY</span><strong>{selectedNeo.physical.density ? formatNumber(selectedNeo.physical.density, 2) : "—"} <small>G/CM³</small></strong></div>
+                  <div><span>ORBIT CLASS</span><strong>{selectedNeo.physical.orbitClass || "—"}</strong></div>
+                  <div><span>SPIN POLE</span><strong>{selectedNeo.physical.pole || "—"} <small>RA/DEC</small></strong></div>
+                  <div><span>DATA SOURCE</span><strong>{selectedNeo.physical.source === "NASA/JPL SBDB" ? "JPL SBDB" : "REFERENCE"}</strong></div>
+                </div>
+              {/if}
               <div class="detail-actions">
                 <button class="arcade-button" on:click={() => addNeo(selectedNeo)} disabled={savedIds.has(selectedNeo.id) || addingId === selectedNeo.id}>
                   {addingId === selectedNeo.id ? "READING JPL PROFILE" : savedIds.has(selectedNeo.id) ? "ALREADY IN ORBIT" : "ADD TO DASHBOARD"} <span>→</span>

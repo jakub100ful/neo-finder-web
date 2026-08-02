@@ -28,6 +28,34 @@ export function getMoonRelativePosition(phase = 0) {
 export function getNeoOrbitPosition(metrics, phase = metrics?.phase ?? 0) {
   const radius = Number(metrics?.radius) || 0;
   const inclination = Number(metrics?.inclination) || 0;
+
+  // When JPL orbital elements are available, treat the scene radius as the
+  // semi-major axis of an elliptical path and orient that path using the
+  // classical elements.  The fallback below intentionally preserves the
+  // compact demo orbit used by older saved objects without those elements.
+  const orbit = metrics?.orbit;
+  if (orbit?.hasElements) {
+    const eccentricity = Math.min(0.75, Math.max(0, Number(orbit.eccentricity) || 0));
+    const semiMinor = radius * Math.sqrt(1 - eccentricity ** 2);
+    const eccentricAnomaly = Number.isFinite(phase) ? phase : 0;
+    const localX = radius * (Math.cos(eccentricAnomaly) - eccentricity);
+    const localZ = semiMinor * Math.sin(eccentricAnomaly);
+    const argument = Number(orbit.argumentOfPeriapsisRadians) || 0;
+    const node = Number(orbit.ascendingNodeRadians) || 0;
+    const tilt = Number(orbit.inclinationRadians) || 0;
+
+    const periapsisX = localX * Math.cos(argument) - localZ * Math.sin(argument);
+    const periapsisZ = localX * Math.sin(argument) + localZ * Math.cos(argument);
+    const tiltedY = -periapsisZ * Math.sin(tilt);
+    const tiltedZ = periapsisZ * Math.cos(tilt);
+
+    return {
+      x: periapsisX * Math.cos(node) + tiltedZ * Math.sin(node),
+      y: tiltedY,
+      z: -periapsisX * Math.sin(node) + tiltedZ * Math.cos(node)
+    };
+  }
+
   return {
     x: Math.cos(phase) * radius,
     y: Math.sin(phase) * radius * inclination,

@@ -54,12 +54,14 @@
           new THREE.MeshStandardMaterial({
             color: appearance.materialColor,
             roughness: appearance.roughness,
-            metalness: appearance.shape === "metallic" ? 0.55 : 0.02,
+            metalness: appearance.metalness,
+            vertexColors: true,
             flatShading: true
           })
         );
         geometry = asteroid.geometry;
         material = asteroid.material;
+        const spinAxis = new THREE.Vector3(...appearance.spinAxis).normalize();
         asteroid.position.set(0, 0, 0);
         asteroid.rotation.set(0.12, -0.24, 0.08);
         scene.add(asteroid);
@@ -96,8 +98,7 @@
 
           // The preview is deliberately not an orbital scene. Its origin stays
           // fixed while the asteroid rotates around its own local axes.
-          asteroid.rotation.x += appearance.spin * delta * 60;
-          asteroid.rotation.y += appearance.spin * delta * 72;
+          asteroid.rotateOnAxis(spinAxis, appearance.spin * delta * 60);
           renderer.render(scene, camera);
         };
         frame = requestAnimationFrame(animate);

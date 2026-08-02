@@ -1,5 +1,5 @@
 <script>
-import { onMount } from "svelte";
+import { createEventDispatcher, onMount } from "svelte";
 import { getSceneMetrics } from "./neo.js";
 import {
   EARTH_RADIUS_SCENE,
@@ -41,6 +41,9 @@ import {
   let renderError = "";
   let renderStatus = "INITIALISING";
   let earthRotation = 0;
+  let hoveredNeo = null;
+  let hoverPosition = { x: 0, y: 0 };
+  const dispatch = createEventDispatcher();
   let fallbackView = {
     cameraPosition: getCameraOrbitPosition({
       azimuth: 0,
@@ -371,16 +374,16 @@ import {
       earthFrame.add(orbitGroup, asteroidGroup, moonOrbitGroup);
       const asteroidObjects = [];
 
-      function createOrbitLine(radius, color, inclination, opacity = 0.42) {
+      function createOrbitLine(radius, color, inclination, opacity = 0.42, orbit = null) {
         const points = [];
         for (let index = 0; index < 80; index += 1) {
           const angle = (index / 80) * Math.PI * 2;
+          const position = getNeoOrbitPosition(
+            { radius, inclination, orbit, phase: angle },
+            angle
+          );
           points.push(
-            new THREE.Vector3(
-              Math.cos(angle) * radius,
-              Math.sin(angle) * radius * inclination,
-              Math.sin(angle) * radius
-            )
+            new THREE.Vector3(position.x, position.y, position.z)
           );
         }
         const geometry = new THREE.BufferGeometry().setFromPoints(points);
@@ -456,6 +459,7 @@ import {
         disposeGroup(orbitGroup);
         disposeGroup(asteroidGroup);
         asteroidObjects.length = 0;
+        clearNeoHover();
 
         nextNeos.slice(0, 8).forEach((neo, index) => {
           const metrics = getSceneMetrics(neo, index);
@@ -463,7 +467,8 @@ import {
           const asteroidMaterial = new THREE.MeshStandardMaterial({
             color: appearance.materialColor,
             roughness: appearance.roughness,
-            metalness: appearance.shape === "metallic" ? 0.55 : 0.02,
+            metalness: appearance.metalness,
+            vertexColors: true,
             flatShading: true
           });
           const asteroid = new THREE.Mesh(
@@ -479,23 +484,120 @@ import {
               opacity: 0.1
             })
           );
+          // Keep the visible polygon crisp while giving pointer picking a
+          // forgiving target at the tiny screen sizes used for real NEOs.
+          const pickProxy = new THREE.Mesh(
+            new THREE.SphereGeometry(Math.max(metrics.size * 2.4, 0.9), 8, 6),
+            new THREE.MeshBasicMaterial({
+              transparent: true,
+              opacity: 0,
+              depthWrite: false
+            })
+          );
           const object = new THREE.Group();
-          object.add(asteroid, halo);
+          object.add(asteroid, halo, pickProxy);
           object.userData = {
             id: neo?.id ?? neo?.name ?? `neo-${index}`,
+            neo,
             radius: metrics.radius,
             speed: metrics.speed,
             phase: metrics.phase,
             inclination: metrics.inclination,
-            spin: appearance.spin
+            orbit: metrics.orbit,
+            spin: appearance.spin,
+            spinAxis: new THREE.Vector3(...appearance.spinAxis).normalize()
           };
           asteroidGroup.add(object);
           orbitGroup.add(
-            createOrbitLine(metrics.radius, palette.orbit, metrics.inclination)
+            createOrbitLine(
+              metrics.radius,
+              palette.orbit,
+              metrics.inclination,
+              0.42,
+              metrics.orbit
+            )
           );
           asteroidObjects.push(object);
         });
       }
+
+      const raycaster = new THREE.Raycaster();
+      const pointer = new THREE.Vector2();
+      let pointerDown = null;
+      let pointerMoved = false;
+
+      function getPointerHit(event) {
+        const bounds = canvas.getBoundingClientRect();
+        if (!bounds.width || !bounds.height) return null;
+        pointer.x = ((event.clientX - bounds.left) / bounds.width) * 2 - 1;
+        pointer.y = -((event.clientY - bounds.top) / bounds.height) * 2 + 1;
+        raycaster.setFromCamera(pointer, camera);
+        const hit = raycaster.intersectObjects(asteroidObjects, true)[0];
+        if (!hit) return null;
+        let object = hit.object;
+        while (object && !object.userData?.neo) object = object.parent;
+        return object?.userData?.neo ? { neo: object.userData.neo, object } : null;
+      }
+
+      function clearNeoHover() {
+        if (!hoveredNeo) return;
+        hoveredNeo = null;
+        dispatch("neoHover", null);
+      }
+
+      function updateNeoHover(event) {
+        const hit = getPointerHit(event);
+        if (!hit) {
+          clearNeoHover();
+          return;
+        }
+        const bounds = canvas.getBoundingClientRect();
+        const worldPosition = new THREE.Vector3();
+        hit.object.getWorldPosition(worldPosition);
+        worldPosition.project(camera);
+        hoveredNeo = hit.neo;
+        hoverPosition = {
+          x: (worldPosition.x * 0.5 + 0.5) * bounds.width,
+          y: (-worldPosition.y * 0.5 + 0.5) * bounds.height
+        };
+        dispatch("neoHover", hit.neo);
+      }
+
+      const handlePointerDown = (event) => {
+        pointerDown = { x: event.clientX, y: event.clientY };
+        pointerMoved = false;
+      };
+      const handlePointerMove = (event) => {
+        if (pointerDown) {
+          const distance = Math.hypot(
+            event.clientX - pointerDown.x,
+            event.clientY - pointerDown.y
+          );
+          if (distance > 5) {
+            pointerMoved = true;
+            clearNeoHover();
+            return;
+          }
+        }
+        if (!pointerDown || event.buttons === 0) updateNeoHover(event);
+      };
+      const handlePointerUp = (event) => {
+        const wasClick = !pointerMoved;
+        pointerDown = null;
+        pointerMoved = false;
+        if (!wasClick) return;
+        const hit = getPointerHit(event);
+        if (hit) dispatch("neoSelect", hit.neo);
+      };
+      const handlePointerLeave = () => {
+        pointerDown = null;
+        pointerMoved = false;
+        clearNeoHover();
+      };
+      canvas.addEventListener("pointerdown", handlePointerDown);
+      canvas.addEventListener("pointermove", handlePointerMove);
+      canvas.addEventListener("pointerup", handlePointerUp);
+      canvas.addEventListener("pointerleave", handlePointerLeave);
 
       function updateEarth(next) {
         palette = THEMES[next.theme] || THEMES.aqua;
@@ -647,8 +749,7 @@ import {
           object.userData.phase += delta * NEO_ORBIT_PHASE_RATE * object.userData.speed;
           const position = getNeoOrbitPosition(object.userData, object.userData.phase);
           object.position.set(position.x, position.y, position.z);
-          object.rotation.x += object.userData.spin * delta * 60;
-          object.rotation.y += object.userData.spin * delta * 72;
+          object.rotateOnAxis(object.userData.spinAxis, object.userData.spin * delta * 60);
           softwareNeoPhases[object.userData.id] = object.userData.phase;
         });
         if (softwareFallbackActive) {
@@ -672,6 +773,11 @@ import {
         controls.removeEventListener("change", syncFallbackView);
         controls.removeEventListener("start", handleControlsStart);
         controls.removeEventListener("end", handleControlsEnd);
+        canvas.removeEventListener("pointerdown", handlePointerDown);
+        canvas.removeEventListener("pointermove", handlePointerMove);
+        canvas.removeEventListener("pointerup", handlePointerUp);
+        canvas.removeEventListener("pointerleave", handlePointerLeave);
+        clearNeoHover();
         controls.dispose();
         disposeGroup(orbitGroup);
         disposeGroup(asteroidGroup);
@@ -724,6 +830,16 @@ import {
   ></canvas>
   <canvas bind:this={canvas} class="webgl-canvas" aria-hidden="true"></canvas>
   <div class="scene-vignette"></div>
+  {#if hoveredNeo}
+    <div
+      class="neo-hover-label"
+      role="tooltip"
+      style={`left: ${hoverPosition.x}px; top: ${hoverPosition.y}px;`}
+    >
+      <span>NEO // SELECT TO LOG</span>
+      <strong>{hoveredNeo.name}</strong>
+    </div>
+  {/if}
   {#if renderError}
     <div class="scene-error" role="status">
       <strong>{renderError}</strong>
@@ -816,6 +932,33 @@ import {
     background:
       linear-gradient(90deg, rgba(4, 5, 18, 0.55), transparent 18%, transparent 82%, rgba(4, 5, 18, 0.55)),
       linear-gradient(0deg, rgba(4, 5, 18, 0.5), transparent 18%, transparent 82%, rgba(4, 5, 18, 0.42));
+  }
+
+  .neo-hover-label {
+    position: absolute;
+    z-index: 5;
+    display: grid;
+    gap: 0.18rem;
+    min-width: 9rem;
+    padding: 0.45rem 0.58rem;
+    transform: translate(0.55rem, -50%);
+    border: 1px solid rgba(97, 231, 255, 0.68);
+    background: rgba(5, 6, 18, 0.9);
+    box-shadow: 4px 4px 0 rgba(2, 3, 12, 0.4);
+    pointer-events: none;
+  }
+
+  .neo-hover-label span {
+    color: var(--cyan);
+    font-size: 0.46rem;
+    letter-spacing: 0.1em;
+  }
+
+  .neo-hover-label strong {
+    color: #f0efff;
+    font-family: Arcade, monospace;
+    font-size: 0.62rem;
+    font-weight: 400;
   }
 
   .scene-error {

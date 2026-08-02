@@ -28,6 +28,8 @@ import {
   sampleSphereSurface,
   shadeSurface
 } from "../src/lib/space-raster.mjs";
+import { createAsteroidGeometry } from "../src/lib/asteroid-geometry.mjs";
+import { getAppearance, getSceneMetrics } from "../src/lib/neo.js";
 
 const nearlyEqual = (actual, expected, tolerance = 1e-6) => {
   assert.ok(Math.abs(actual - expected) <= tolerance, `${actual} is not within ${tolerance} of ${expected}`);
@@ -59,6 +61,99 @@ test("NEOs retain their orbital radius, inclination and phase", () => {
   nearlyEqual(horizontalRadius, metrics.radius);
   nearlyEqual(position.y, Math.sin(metrics.phase) * metrics.radius * metrics.inclination);
   assert.ok(metrics.speed * NEO_ORBIT_PHASE_RATE > 0);
+});
+
+test("JPL physical fields shape the asteroid and orbital orientation profile", () => {
+  const neo = {
+    id: "2000433",
+    orbital_data: {
+      eccentricity: "0.2229",
+      inclination: "10.8285",
+      ascending_node_longitude: "304.2679",
+      perihelion_argument: "178.9181",
+      mean_anomaly: "62.5114",
+      orbital_period: "643.196"
+    },
+    physical: {
+      extent: "34.4x11.2x11.2",
+      density: 2.67,
+      rotationPeriodHours: 5.27,
+      pole: "11.37/17.22",
+      albedo: 0.25,
+      colorIndexBV: 0.921,
+      spectralClass: "S"
+    }
+  };
+
+  const appearance = getAppearance(neo);
+  const metrics = getSceneMetrics(neo);
+  const axisLength = Math.hypot(...appearance.spinAxis);
+
+  assert.ok(appearance.axisRatios[0] > appearance.axisRatios[1] * 1.5);
+  nearlyEqual(axisLength, 1);
+  assert.equal(appearance.rotationPeriodHours, 5.27);
+  assert.equal(appearance.spectralClass, "S");
+  assert.ok(appearance.surfaceRelief > 0);
+  assert.ok(metrics.orbit.eccentricity > 0);
+  assert.notEqual(metrics.orbit.ascendingNodeRadians, 0);
+});
+
+test("orbital elements tilt and elongate the rendered NEO path", async () => {
+  const source = await readFile(new URL("../src/lib/orbit-model.mjs", import.meta.url), "utf8");
+
+  for (const marker of [
+    "ascendingNodeRadians",
+    "argumentOfPeriapsisRadians",
+    "eccentricity",
+    "Math.sqrt(1 - eccentricity ** 2)"
+  ]) {
+    assert.ok(source.includes(marker), `missing orbital-element marker: ${marker}`);
+  }
+});
+
+test("orbital elements produce an eccentric, tilted scene path", () => {
+  const metrics = {
+    radius: 30,
+    orbit: {
+      hasElements: true,
+      eccentricity: 0.5,
+      ascendingNodeRadians: 0.7,
+      argumentOfPeriapsisRadians: 0.4,
+      inclinationRadians: 0.35
+    }
+  };
+  const periapsis = getNeoOrbitPosition(metrics, 0);
+  const apoapsis = getNeoOrbitPosition(metrics, Math.PI);
+
+  assert.ok(distance(apoapsis) > distance(periapsis));
+  assert.notEqual(periapsis.y, 0);
+  assert.notEqual(periapsis.x, metrics.radius);
+});
+
+test("physical geometry creates an asymmetric, colored polygon surface", async () => {
+  const THREE = await import("three");
+  const geometry = createAsteroidGeometry(THREE, 1, {
+    shape: "angular",
+    seed: 433,
+    axisRatios: [2, 1, 0.7],
+    surfaceRelief: 0.22,
+    craterCount: 5,
+    craterDepth: 0.14,
+    geometryDetail: 2,
+    materialColor: 0x665544,
+    accentColor: 0xaa8866
+  });
+  const positions = geometry.attributes.position;
+  const xValues = [];
+  const yValues = [];
+  for (let index = 0; index < positions.count; index += 1) {
+    xValues.push(Math.abs(positions.getX(index)));
+    yValues.push(Math.abs(positions.getY(index)));
+  }
+  assert.ok(Math.max(...xValues) > Math.max(...yValues));
+  assert.ok(geometry.attributes.color);
+  assert.equal(geometry.attributes.color.count, positions.count);
+  geometry.dispose();
 });
 
 test("the renderer state includes visible Earth, Moon and NEO bodies", () => {
@@ -302,6 +397,22 @@ test("the live renderer parks fallback work and lowers GPU quality during intera
   assert.ok(rasterSource.includes("imageBuffer"));
 });
 
+test("the orbital scene exposes asteroid picking and the mission log exposes quick info", async () => {
+  const sceneSource = await readFile(new URL("../src/lib/SpaceScene.svelte", import.meta.url), "utf8");
+  const pageSource = await readFile(new URL("../src/routes/+page.svelte", import.meta.url), "utf8");
+  const geometrySource = await readFile(new URL("../src/lib/asteroid-geometry.mjs", import.meta.url), "utf8");
+
+  for (const marker of ["Raycaster", "pointermove", "pointerup", "neoHover", "neoSelect", "role=\"tooltip\""]) {
+    assert.ok(sceneSource.includes(marker), `missing asteroid picking marker: ${marker}`);
+  }
+  for (const marker of ["missionNeo", "openMissionNeo", "BACK TO MISSION LOG", "SEE MORE", "on:neoSelect"]) {
+    assert.ok(pageSource.includes(marker), `missing mission log marker: ${marker}`);
+  }
+  for (const marker of ["axisRatios", "surfaceRelief", "crater", "vertexColors"]) {
+    assert.ok(geometrySource.includes(marker), `missing detailed geometry marker: ${marker}`);
+  }
+});
+
 test("the catalogue detail preview isolates a stationary, self-spinning asteroid", async () => {
   const pageSource = await readFile(new URL("../src/routes/+page.svelte", import.meta.url), "utf8");
   const previewSource = await readFile(new URL("../src/lib/AsteroidPreview.svelte", import.meta.url), "utf8");
@@ -309,9 +420,10 @@ test("the catalogue detail preview isolates a stationary, self-spinning asteroid
   assert.match(pageSource, /<AsteroidPreview\s+neo=\{selectedNeo\}/);
   for (const marker of [
     "position.set(0, 0, 0)",
-    "rotation.x +=",
-    "rotation.y +=",
+    "spinAxis",
+    "rotateOnAxis",
     "MeshStandardMaterial",
+    "vertexColors: true",
     "flatShading: true",
     'aria-label="Rotating asteroid preview"'
   ]) {

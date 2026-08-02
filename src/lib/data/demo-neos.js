@@ -6,7 +6,8 @@ function makeDemoNeo({
   distance,
   inclination,
   hazardous,
-  approach
+  approach,
+  physical = {}
 }) {
   return {
     id,
@@ -48,7 +49,8 @@ function makeDemoNeo({
       eccentricity: "0." + String(210 + inclination).slice(-3),
       semi_major_axis: "1." + String(40 + inclination).slice(-2),
       orbital_period: String(365 + inclination * 2)
-    }
+    },
+    ...(Object.keys(physical).length ? { physical } : {})
   };
 }
 
@@ -61,7 +63,21 @@ export const demoNeos = [
     distance: 28100000,
     inclination: 10.8,
     hazardous: false,
-    approach: "1998-08-01"
+    approach: "1998-08-01",
+    physical: {
+      source: "NASA/JPL SBDB reference profile",
+      diameterKm: 16.84,
+      extent: "34.4x11.2x11.2",
+      extentKm: [34.4, 11.2, 11.2],
+      density: 2.67,
+      rotationPeriodHours: 5.27,
+      pole: "11.37/17.22",
+      albedo: 0.25,
+      colorIndexBV: 0.921,
+      spectralClass: "S",
+      tholenClass: "S",
+      smassClass: "S"
+    }
   }),
   makeDemoNeo({
     id: "demo-999",
