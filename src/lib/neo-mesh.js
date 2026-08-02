@@ -91,8 +91,8 @@ export function createMeshInstance(Engine, template, appearance, targetRadius) {
       vertexColors: hasVertexColors,
       flatShading: false
     });
-    object.castShadow = false;
-    object.receiveShadow = false;
+    object.castShadow = true;
+    object.receiveShadow = true;
   });
 
   return instance;

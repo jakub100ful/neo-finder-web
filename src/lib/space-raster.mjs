@@ -452,7 +452,7 @@ function drawSphere(ctx, {
       const localNormal = rotateVector(worldNormal, { y: -rotationY });
       const color = sampleTexture(texture, localNormal);
       const edgeShade = 0.52 + sample.depth * 0.48;
-      const brightness = shadeSurface(worldNormal, lightDirection, 0.18) * edgeShade;
+      const brightness = shadeSurface(worldNormal, lightDirection, 0.06) * edgeShade;
       const offset = (y * diameter + x) * 4;
       const [red, green, blue] = colorWithBrightness(color, brightness);
       image.data[offset] = red;
@@ -491,7 +491,7 @@ function drawPolyhedron(ctx, { center, radius, view, polyhedron, rotation, color
   const baseColor = parseColor(color);
   ctx.save();
   for (const face of faces) {
-    const brightness = shadeSurface(face.normal, lightDirection, 0.22);
+    const brightness = shadeSurface(face.normal, lightDirection, 0.08);
     const [red, green, blue] = colorWithBrightness(baseColor, brightness);
     ctx.fillStyle = `rgb(${red} ${green} ${blue})`;
     ctx.strokeStyle = "rgba(12, 15, 28, 0.8)";

@@ -110,7 +110,7 @@ export async function fetchNeoOrbitData(neo, apiKey) {
 }
 
 export async function fetchPhysicalProfile(neo) {
-  const spkId = String(neo?.id || "");
+  const spkId = String(neo?.jplSpkId || neo?.spkid || neo?.spkId || neo?.id || "");
   if (!/^\d+$/.test(spkId)) return null;
 
   if (physicalProfileCache.has(spkId)) return physicalProfileCache.get(spkId);

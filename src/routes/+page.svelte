@@ -1,6 +1,7 @@
 <script>
   import { onMount } from "svelte";
   import AsteroidPreview from "../lib/AsteroidPreview.svelte";
+  import DiscoverPage from "../lib/DiscoverPage.svelte";
   import SpaceScene from "../lib/SpaceScene.svelte";
   import { demoNeos } from "../lib/data/demo-neos.js";
   import { getMeshRecord, getPdsSearchUrl } from "../lib/pds-mesh.js";
@@ -278,6 +279,11 @@
     view = "catalogue";
   }
 
+  function openDiscover() {
+    lastView = view;
+    view = "discover";
+  }
+
   function openDateEditor(returnView = view) {
     dateReturnView = returnView || "dashboard";
     dateDraft = activeDate;
@@ -355,6 +361,12 @@
   function backFromDetail() {
     view = lastView || "catalogue";
     selectedNeo = null;
+  }
+
+  function getViewLabel(currentView) {
+    if (currentView === "dashboard") return "DASHBOARD";
+    if (currentView === "discover") return "DISCOVER";
+    return "CATALOGUE";
   }
 
   async function addNeo(neo) {
@@ -574,6 +586,7 @@
       <nav class="main-nav" aria-label="Main navigation">
         <button class:active={view === "dashboard"} on:click={() => (view = "dashboard")}>DASHBOARD</button>
         <button class:active={view === "catalogue"} on:click={openCatalogue}>CATALOGUE <span>{neoList.length}</span></button>
+        <button class:active={view === "discover"} on:click={openDiscover}>DISCOVER</button>
         <button class:active={view === "settings"} on:click={openSettings}>CUSTOMISE</button>
         <button class:active={view === "about"} on:click={openAbout}>ABOUT <span>i</span></button>
       </nav>
@@ -771,9 +784,11 @@
           </div>
         {/if}
       </main>
+    {:else if view === "discover"}
+      <DiscoverPage on:openDetail={(event) => openDetail(event.detail)} on:addNeo={(event) => addNeo(event.detail)} />
     {:else if view === "detail"}
       <main class="page-content detail-view">
-        <button class="back-button" on:click={backFromDetail}>← BACK TO {lastView === "dashboard" ? "DASHBOARD" : "CATALOGUE"}</button>
+        <button class="back-button" on:click={backFromDetail}>← BACK TO {getViewLabel(lastView)}</button>
         {#if selectedNeo}
            <section class="detail-grid">
              <div class="detail-scene panel">
@@ -786,11 +801,17 @@
               <div class="eyebrow">NASA / JPL SMALL BODY RECORD</div>
               <h1>{selectedNeo.name}</h1>
               <div class={"detail-risk " + getRisk(selectedNeo).tone}><span>{getRisk(selectedNeo).label}</span><small>{getRisk(selectedNeo).detail}</small></div>
-              <p class="detail-lede">A close approach object observed near your anchor date. Use the values below as the real-world record; this close-up keeps the asteroid centred so you can study its shape and spin.</p>
+              <p class="detail-lede">
+                {#if getApproach(selectedNeo).close_approach_date}
+                  A close approach object observed near your anchor date. Use the values below as the real-world record; this close-up keeps the asteroid centred so you can study its shape and spin.
+                {:else}
+                  An official NEO profile selected from Discover. No approach event is included in the current Discover window; the object remains available for shape and physical study.
+                {/if}
+              </p>
               <div class="detail-stat-grid">
                 <div><span>DIAMETER</span><strong>{formatNumber(getDiameterKm(selectedNeo), 2)} <small>KM</small></strong></div>
-                <div><span>RELATIVE SPEED</span><strong>{formatNumber(getSpeedKps(selectedNeo), 2)} <small>KM/S</small></strong></div>
-                <div><span>MISS DISTANCE</span><strong>{formatDistance(selectedNeo)}</strong></div>
+                <div><span>RELATIVE SPEED</span><strong>{#if getApproach(selectedNeo).close_approach_date}{formatNumber(getSpeedKps(selectedNeo), 2)} <small>KM/S</small>{:else}—{/if}</strong></div>
+                <div><span>MISS DISTANCE</span><strong>{#if getApproach(selectedNeo).close_approach_date}{formatDistance(selectedNeo)}{:else}—{/if}</strong></div>
                 <div><span>INCLINATION</span><strong>{formatNumber(Number(selectedNeo.orbital_data?.inclination), 1)} <small>°</small></strong></div>
                 <div><span>ECCENTRICITY</span><strong>{formatNumber(Number(selectedNeo.orbital_data?.eccentricity), 3)}</strong></div>
               </div>
@@ -829,7 +850,7 @@
                 <a class="ghost-button link-button" href={selectedNeo.nasa_jpl_url} target="_blank" rel="noreferrer">OPEN NASA RECORD ↗</a>
               </div>
                <div class="detail-source">
-                 CLOSE APPROACH // {formatDate(getApproach(selectedNeo).close_approach_date)} // EARTH //
+                 {#if getApproach(selectedNeo).close_approach_date}CLOSE APPROACH // {formatDate(getApproach(selectedNeo).close_approach_date)} // EARTH //{:else}OBJECT PROFILE // EARTH APPROACH OUTSIDE DISCOVER WINDOW //{/if}
                  {#if getMeshRecord(selectedNeo)}
                    <a href={getMeshRecord(selectedNeo).pdsRecordUrl} target="_blank" rel="noreferrer">PDS MODEL ↗</a>
                  {:else}

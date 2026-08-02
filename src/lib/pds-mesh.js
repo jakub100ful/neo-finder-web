@@ -54,11 +54,16 @@ export function getNeoMeshIdentifiers(neo) {
   const values = [
     neo?.id,
     neo?.neo_reference_id,
+    neo?.spkid,
+    neo?.spkId,
+    neo?.jplSpkId,
+    neo?.pdes,
     neo?.name,
     neo?.designation,
     neo?.full_name,
     neo?.object?.name,
-    neo?.object?.des
+    neo?.object?.des,
+    ...(Array.isArray(neo?.aliases) ? neo.aliases : [])
   ];
   return [...new Set(values.map(normalizeIdentifier).filter(Boolean))];
 }
