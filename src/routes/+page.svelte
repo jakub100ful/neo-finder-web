@@ -91,6 +91,7 @@
   const educationalFacts = [
     "A NEO is defined by an orbit that can bring it within 1.3 AU of the Sun. Most NEOs are asteroids.",
     "A close approach is a geometry event: distance and time, not a promise that an object will hit Earth.",
+    "CNEOS measures miss distance from Earth's centre to the NEO's centre; the scene keeps that approach scale clear of the rendered Earth.",
     "CNEOS refines orbits using observations reported by telescopes and the Minor Planet Center.",
     "The real feed gives us size estimates, velocity and miss distance. This scene compresses those values for play.",
     "JPL's Small-Body Database can add physical clues such as albedo, spectral class and rotation period.",
@@ -687,7 +688,7 @@
             </div>
             <div class="tip-panel">
               <div class="tip-heading"><span class="tip-label">FIELD NOTE</span><button class="info-button" aria-label="Open how it works" on:click={openAbout}>?</button></div>
-              <p>Orbital speed is rendered relative to each object's real km/s velocity. Scale is compressed for a readable personal sky.</p>
+              <p>Orbital speed is rendered relative to each object's real km/s velocity. Eccentricity and inclination shape the path; a small clearance floor keeps the rendered asteroid outside Earth.</p>
               <button class="text-link-button" on:click={openAbout}>HOW NASA TRACKS →</button>
             </div>
           </aside>
@@ -867,7 +868,9 @@
             <p>
               The catalogue starts with NASA’s NeoWs feed: approach date, miss distance, estimated diameter and
               relative velocity. When you add an object, NEO Finder can also ask JPL’s Small-Body Database for
-              physical clues such as albedo, spectral class and rotation period.
+              physical clues such as albedo, spectral class, rotation period and orbital elements. Those elements
+              describe the NEO around the Sun; this dashboard turns them into a scaled Earth-centred study view,
+              anchored by the recorded Earth-centre-to-NEO-centre close-approach distance.
             </p>
             <a href="https://ssd-api.jpl.nasa.gov/doc/sbdb.html" target="_blank" rel="noreferrer">OPEN JPL SBDB DOCS ↗</a>
           </article>

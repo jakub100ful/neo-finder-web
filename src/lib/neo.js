@@ -1,3 +1,5 @@
+import { getNeoMinimumPeriapsisRadius } from "./orbit-model.mjs";
+
 export const NASA_TOKEN_STORAGE_KEY = "neo-finder:nasa-api-token";
 export const PROFILE_STORAGE_KEY = "neo-finder:profile";
 export const FAVOURITES_STORAGE_KEY = "neo-finder:favourites";
@@ -464,9 +466,14 @@ export function getSceneMetrics(neo, index = 0) {
   const speed = getSpeedKps(neo);
   const distance = getDistanceKm(neo);
   const orbit = getOrbitalProfile(neo);
+  const radius = Math.min(44, Math.max(19, 17 + Math.log10(Math.max(distance, 1)) * 2.9));
+  const size = Math.min(3.8, Math.max(0.7, 0.55 + Math.log10(Math.max(diameter, 0.01) + 1) * 1.5));
+  const bodyRadius = size * 1.5;
   return {
-    radius: Math.min(44, Math.max(19, 17 + Math.log10(Math.max(distance, 1)) * 2.9)),
-    size: Math.min(3.8, Math.max(0.7, 0.55 + Math.log10(Math.max(diameter, 0.01) + 1) * 1.5)),
+    radius,
+    size,
+    bodyRadius,
+    minimumPeriapsisRadius: getNeoMinimumPeriapsisRadius(bodyRadius),
     speed: Math.min(1.6, Math.max(0.24, speed / 20)),
     phase: (index * 1.43 + orbit.meanAnomalyRadians) % (Math.PI * 2),
     inclination: orbit.hasElements

@@ -10,6 +10,7 @@ export const MOON_DISTANCE_KM = 384400;
 export const MOON_ORBIT_PERIOD_DAYS = 27.32166;
 export const SIMULATED_DAYS_PER_SECOND = 1;
 export const NEO_ORBIT_PHASE_RATE = 0.21;
+export const NEO_ORBIT_CLEARANCE_SCENE = 1.25;
 
 export const MOON_RADIUS_SCENE = EARTH_RADIUS_SCENE * (MOON_RADIUS_KM / EARTH_RADIUS_KM);
 export const MOON_ORBIT_RADIUS = EARTH_RADIUS_SCENE * (MOON_DISTANCE_KM / EARTH_RADIUS_KM);
@@ -23,6 +24,16 @@ export function getMoonRelativePosition(phase = 0) {
     y: 0,
     z: Math.sin(phase) * MOON_ORBIT_RADIUS
   };
+}
+
+export function getNeoMinimumPeriapsisRadius(bodyRadius = 0, centralBodyRadius = EARTH_RADIUS_SCENE) {
+  const body = Number(bodyRadius);
+  const central = Number(centralBodyRadius);
+  return (
+    (Number.isFinite(central) && central > 0 ? central : EARTH_RADIUS_SCENE) +
+    (Number.isFinite(body) && body > 0 ? body : 0) +
+    NEO_ORBIT_CLEARANCE_SCENE
+  );
 }
 
 function wrapAngle(angle) {
@@ -47,17 +58,31 @@ export function solveKeplerEquation(meanAnomaly, eccentricity) {
 }
 
 export function getNeoOrbitPosition(metrics, phase = metrics?.phase ?? 0) {
-  const radius = Number(metrics?.radius) || 0;
+  const requestedRadius = Number(metrics?.radius);
+  const radius = Number.isFinite(requestedRadius) && requestedRadius > 0 ? requestedRadius : 0;
+  const bodyRadius = Number(metrics?.bodyRadius ?? metrics?.size);
+  const centralBodyRadius = Number(metrics?.centralBodyRadius);
+  const configuredMinimumPeriapsis = Number(metrics?.minimumPeriapsisRadius);
+  const minimumPeriapsisRadius =
+    Number.isFinite(configuredMinimumPeriapsis) && configuredMinimumPeriapsis > 0
+      ? configuredMinimumPeriapsis
+      : getNeoMinimumPeriapsisRadius(bodyRadius, centralBodyRadius);
+  const safePeriapsisRadius = Math.max(radius, minimumPeriapsisRadius);
 
-  // The display uses the same scene radius as the semi-major axis for every
-  // NEO. That keeps the app's compressed miss-distance scale consistent while
-  // eccentricity changes the periapsis/apoapsis around that shared baseline.
+  // The feed's miss distance is measured from Earth's centre to the NEO's
+  // centre. It becomes the preferred shared display scale, while this floor
+  // prevents an eccentric ellipse from drawing the visible body through Earth.
+  // The floor only expands the semi-major axis when a(1-e) would be unsafe.
   const orbit = metrics?.orbit;
   if (orbit?.hasElements) {
     const eccentricity = Math.min(0.999999, Math.max(0, Number(orbit.eccentricity) || 0));
-    const semiMinor = radius * Math.sqrt(1 - eccentricity ** 2);
+    const semiMajorAxis = Math.max(
+      radius,
+      minimumPeriapsisRadius / Math.max(1 - eccentricity, 0.000001)
+    );
+    const semiMinor = semiMajorAxis * Math.sqrt(1 - eccentricity ** 2);
     const eccentricAnomaly = solveKeplerEquation(phase, eccentricity);
-    const xPrime = radius * (Math.cos(eccentricAnomaly) - eccentricity);
+    const xPrime = semiMajorAxis * (Math.cos(eccentricAnomaly) - eccentricity);
     const yPrime = semiMinor * Math.sin(eccentricAnomaly);
     const argument = Number(orbit.argumentOfPeriapsisRadians) || 0;
     const node = Number(orbit.ascendingNodeRadians) || 0;
@@ -85,9 +110,9 @@ export function getNeoOrbitPosition(metrics, phase = metrics?.phase ?? 0) {
 
   const inclination = Number(metrics?.inclination) || 0;
   return {
-    x: Math.cos(phase) * radius,
-    y: Math.sin(phase) * radius * inclination,
-    z: Math.sin(phase) * radius
+    x: Math.cos(phase) * safePeriapsisRadius,
+    y: Math.sin(phase) * safePeriapsisRadius * inclination,
+    z: Math.sin(phase) * safePeriapsisRadius
   };
 }
 

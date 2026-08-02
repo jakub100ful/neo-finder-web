@@ -344,16 +344,38 @@ function getDisplayMoonPosition(phase) {
   return scale(raw, displayRadius / MOON_ORBIT_RADIUS);
 }
 
+function getDisplayNeoRadius(neo) {
+  return 25 + Math.max(0, Number(neo.radius) - 19) * 0.55;
+}
+
+function getDisplayNeoBodyRadius(neo) {
+  return Math.max(1.8, Number(neo.size || 1.2) * 0.72);
+}
+
 function getDisplayNeoPosition(neo, phase) {
-  const displayRadius = 25 + Math.max(0, Number(neo.radius) - 19) * 0.55;
+  const displayRadius = getDisplayNeoRadius(neo);
   return getNeoOrbitPosition({
     radius: displayRadius,
     inclination: neo.inclination,
-    orbit: neo.orbit
+    orbit: neo.orbit,
+    bodyRadius: getDisplayNeoBodyRadius(neo),
+    centralBodyRadius: EARTH_RADIUS_SCENE * 1.67
   }, phase);
 }
 
-function drawOrbit(ctx, radius, inclination, orbit, view, width, height, color, opacity) {
+function drawOrbit(
+  ctx,
+  radius,
+  inclination,
+  orbit,
+  view,
+  width,
+  height,
+  color,
+  opacity,
+  bodyRadius = 0,
+  centralBodyRadius = EARTH_RADIUS_SCENE
+) {
   ctx.save();
   ctx.strokeStyle = color;
   ctx.globalAlpha = opacity;
@@ -362,7 +384,7 @@ function drawOrbit(ctx, radius, inclination, orbit, view, width, height, color, 
   let started = false;
   for (let index = 0; index <= 96; index += 1) {
     const phase = (index / 96) * TWO_PI;
-    const position = getNeoOrbitPosition({ radius, inclination, orbit }, phase);
+    const position = getNeoOrbitPosition({ radius, inclination, orbit, bodyRadius, centralBodyRadius }, phase);
     const projected = projectToCanvas(position, view, width, height);
     if (!projected.visible) {
       started = false;
@@ -571,14 +593,16 @@ export function createSoftwareScene(canvas) {
     for (const neo of state.neos) {
       drawOrbit(
         context,
-        25 + Math.max(0, Number(neo.radius) - 19) * 0.55,
+        getDisplayNeoRadius(neo),
         neo.inclination,
         neo.orbit,
         view,
         width,
         height,
         state.palette.orbit,
-        0.45
+        0.45,
+        getDisplayNeoBodyRadius(neo),
+        EARTH_RADIUS_SCENE * 1.67
       );
     }
 

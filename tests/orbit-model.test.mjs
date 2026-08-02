@@ -6,11 +6,13 @@ import {
   EARTH_RADIUS_SCENE,
   MOON_ORBIT_RADIUS,
   MOON_RADIUS_SCENE,
+  NEO_ORBIT_CLEARANCE_SCENE,
   NEO_ORBIT_PHASE_RATE,
   ZOOM_MAX_MULTIPLIER,
   ZOOM_MIN_MULTIPLIER,
   clampCameraDistance,
   getMoonRelativePosition,
+  getNeoMinimumPeriapsisRadius,
   getNeoOrbitPosition,
   getOrbitalRenderState,
   solveKeplerEquation,
@@ -31,6 +33,7 @@ import {
 } from "../src/lib/space-raster.mjs";
 import { createAsteroidGeometry } from "../src/lib/asteroid-geometry.mjs";
 import { fetchNeoOrbitData, getAppearance, getSceneMetrics } from "../src/lib/neo.js";
+import { demoNeos } from "../src/lib/data/demo-neos.js";
 
 const nearlyEqual = (actual, expected, tolerance = 1e-6) => {
   assert.ok(Math.abs(actual - expected) <= tolerance, `${actual} is not within ${tolerance} of ${expected}`);
@@ -62,6 +65,23 @@ test("NEOs retain their orbital radius, inclination and phase", () => {
   nearlyEqual(horizontalRadius, metrics.radius);
   nearlyEqual(position.y, Math.sin(metrics.phase) * metrics.radius * metrics.inclination);
   assert.ok(metrics.speed * NEO_ORBIT_PHASE_RATE > 0);
+});
+
+test("eccentric NEOs keep their rendered body outside the Earth", () => {
+  const bodyRadius = 4;
+  const orbit = {
+    hasElements: true,
+    eccentricity: 0.82,
+    ascendingNodeRadians: 0,
+    argumentOfPeriapsisRadians: 0,
+    inclinationRadians: 0
+  };
+  const periapsis = getNeoOrbitPosition({ radius: 14, bodyRadius, orbit }, 0);
+  const minimumPeriapsis = getNeoMinimumPeriapsisRadius(bodyRadius);
+
+  nearlyEqual(distance(periapsis), minimumPeriapsis);
+  assert.ok(distance(periapsis) > EARTH_RADIUS_SCENE + bodyRadius);
+  nearlyEqual(minimumPeriapsis, EARTH_RADIUS_SCENE + bodyRadius + NEO_ORBIT_CLEARANCE_SCENE);
 });
 
 test("JPL physical fields shape the asteroid and orbital orientation profile", () => {
@@ -97,6 +117,14 @@ test("JPL physical fields shape the asteroid and orbital orientation profile", (
   assert.ok(appearance.surfaceRelief > 0);
   assert.ok(metrics.orbit.eccentricity > 0);
   assert.notEqual(metrics.orbit.ascendingNodeRadians, 0);
+});
+
+test("demo NEO fixtures expose numeric eccentricities for the fallback scene", () => {
+  for (const neo of demoNeos) {
+    const eccentricity = Number(neo.orbital_data.eccentricity);
+    assert.ok(Number.isFinite(eccentricity));
+    assert.ok(eccentricity >= 0 && eccentricity < 1);
+  }
 });
 
 test("orbital elements tilt and elongate the rendered NEO path", async () => {
@@ -152,8 +180,16 @@ test("mean anomaly is converted to eccentric anomaly and preserves the shared sc
     Math.PI / 2,
     1e-9
   );
-  nearlyEqual(Math.hypot(periapsis.x, periapsis.y, periapsis.z), radius * (1 - eccentricity));
-  nearlyEqual(Math.hypot(apoapsis.x, apoapsis.y, apoapsis.z), radius * (1 + eccentricity));
+  const minimumPeriapsis = getNeoMinimumPeriapsisRadius();
+  const semiMajorAxis = Math.max(radius, minimumPeriapsis / (1 - eccentricity));
+  nearlyEqual(
+    Math.hypot(periapsis.x, periapsis.y, periapsis.z),
+    semiMajorAxis * (1 - eccentricity)
+  );
+  nearlyEqual(
+    Math.hypot(apoapsis.x, apoapsis.y, apoapsis.z),
+    semiMajorAxis * (1 + eccentricity)
+  );
   nearlyEqual(quadrature.y / quadrature.z, Math.tan(inclination), 1e-6);
 });
 
@@ -162,8 +198,10 @@ test("the software fallback consumes the same orbital profile as WebGL", async (
 
   for (const marker of [
     "orbit: neo.orbit",
-    "function drawOrbit(ctx, radius, inclination, orbit",
-    "getNeoOrbitPosition({ radius, inclination, orbit }, phase)"
+    "bodyRadius: getDisplayNeoBodyRadius(neo)",
+    "centralBodyRadius: EARTH_RADIUS_SCENE * 1.67",
+    "function drawOrbit(",
+    "getNeoOrbitPosition({ radius, inclination, orbit, bodyRadius, centralBodyRadius }, phase)"
   ]) {
     assert.ok(source.includes(marker), `missing shared fallback orbit marker: ${marker}`);
   }
@@ -190,6 +228,8 @@ test("NEOs with different orbital elements keep one shared scene-radius mapping"
   const highE = getSceneMetrics(makeNeo(0.82, 42), 1);
 
   nearlyEqual(lowE.radius, highE.radius);
+  assert.ok(highE.minimumPeriapsisRadius >= EARTH_RADIUS_SCENE + highE.bodyRadius + NEO_ORBIT_CLEARANCE_SCENE);
+  assert.ok(distance(getNeoOrbitPosition(highE, 0)) >= highE.minimumPeriapsisRadius - 1e-9);
   assert.equal(lowE.orbit.eccentricity, 0.05);
   assert.equal(highE.orbit.eccentricity, 0.82);
   assert.ok(highE.orbit.inclinationRadians > lowE.orbit.inclinationRadians);

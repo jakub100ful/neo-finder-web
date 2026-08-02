@@ -374,12 +374,20 @@ import {
       earthFrame.add(orbitGroup, asteroidGroup, moonOrbitGroup);
       const asteroidObjects = [];
 
-      function createOrbitLine(radius, color, inclination, opacity = 0.42, orbit = null) {
+      function createOrbitLine(
+        radius,
+        color,
+        inclination,
+        opacity = 0.42,
+        orbit = null,
+        bodyRadius = 0,
+        minimumPeriapsisRadius = 0
+      ) {
         const points = [];
         for (let index = 0; index < 80; index += 1) {
           const angle = (index / 80) * Math.PI * 2;
           const position = getNeoOrbitPosition(
-            { radius, inclination, orbit, phase: angle },
+            { radius, inclination, orbit, bodyRadius, minimumPeriapsisRadius, phase: angle },
             angle
           );
           points.push(
@@ -504,6 +512,8 @@ import {
             phase: metrics.phase,
             inclination: metrics.inclination,
             orbit: metrics.orbit,
+            bodyRadius: metrics.bodyRadius,
+            minimumPeriapsisRadius: metrics.minimumPeriapsisRadius,
             spin: appearance.spin,
             spinAxis: new THREE.Vector3(...appearance.spinAxis).normalize()
           };
@@ -514,7 +524,9 @@ import {
               palette.orbit,
               metrics.inclination,
               0.42,
-              metrics.orbit
+              metrics.orbit,
+              metrics.bodyRadius,
+              metrics.minimumPeriapsisRadius
             )
           );
           asteroidObjects.push(object);

@@ -5,6 +5,8 @@ function makeDemoNeo({
   speed,
   distance,
   inclination,
+  eccentricity,
+  semiMajorAxis,
   hazardous,
   approach,
   physical = {}
@@ -46,8 +48,8 @@ function makeDemoNeo({
       orbit_id: id.slice(-3),
       orbit_determination_date: approach,
       inclination: String(inclination),
-      eccentricity: "0." + String(210 + inclination).slice(-3),
-      semi_major_axis: "1." + String(40 + inclination).slice(-2),
+      eccentricity: String(eccentricity),
+      semi_major_axis: String(semiMajorAxis),
       orbital_period: String(365 + inclination * 2)
     },
     ...(Object.keys(physical).length ? { physical } : {})
@@ -62,6 +64,8 @@ export const demoNeos = [
     speed: 18.41,
     distance: 28100000,
     inclination: 10.8,
+    eccentricity: 0.2229,
+    semiMajorAxis: 1.458,
     hazardous: false,
     approach: "1998-08-01",
     physical: {
@@ -86,6 +90,8 @@ export const demoNeos = [
     speed: 7.42,
     distance: 15600000,
     inclination: 3.3,
+    eccentricity: 0.1912,
+    semiMajorAxis: 0.922,
     hazardous: true,
     approach: "2029-04-13"
   }),
@@ -96,6 +102,8 @@ export const demoNeos = [
     speed: 22.09,
     distance: 6190000,
     inclination: 18.1,
+    eccentricity: 0.182,
+    semiMajorAxis: 0.966,
     hazardous: true,
     approach: "2026-08-01"
   }),
@@ -106,6 +114,8 @@ export const demoNeos = [
     speed: 14.62,
     distance: 41900000,
     inclination: 6.4,
+    eccentricity: 0.5599,
+    semiMajorAxis: 1.471,
     hazardous: false,
     approach: "1985-08-01"
   }),
@@ -116,6 +126,8 @@ export const demoNeos = [
     speed: 25.26,
     distance: 10700000,
     inclination: 22.3,
+    eccentricity: 0.8899,
+    semiMajorAxis: 1.271,
     hazardous: true,
     approach: "2017-12-16"
   }),
@@ -126,6 +138,8 @@ export const demoNeos = [
     speed: 11.77,
     distance: 52800000,
     inclination: 23.2,
+    eccentricity: 0.827,
+    semiMajorAxis: 1.078,
     hazardous: false,
     approach: "1991-08-01"
   })
