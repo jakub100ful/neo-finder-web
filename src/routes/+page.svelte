@@ -1,5 +1,6 @@
 <script>
   import { onMount } from "svelte";
+  import AsteroidPreview from "../lib/AsteroidPreview.svelte";
   import SpaceScene from "../lib/SpaceScene.svelte";
   import { demoNeos } from "../lib/data/demo-neos.js";
   import {
@@ -661,23 +662,14 @@
             <div class="detail-scene panel">
               <div class="panel-header"><span>OBJECT PREVIEW</span><span class="signal"><i></i>{getRisk(selectedNeo).detail.toUpperCase()}</span></div>
               <div class="detail-scene-frame">
-                <SpaceScene
-                  neos={[selectedNeo]}
-                  earthTheme={earthTheme}
-                  earthPattern={earthPattern}
-                  landColor={landColor}
-                  fluidColor={fluidColor}
-                  atmosphereColor={atmosphereColor}
-                  atmosphereEnabled={atmosphereEnabled}
-                  landmassConfig={landmassConfig}
-                />
+                <AsteroidPreview neo={selectedNeo} />
               </div>
             </div>
             <div class="detail-copy">
               <div class="eyebrow">NASA / JPL SMALL BODY RECORD</div>
               <h1>{selectedNeo.name}</h1>
               <div class={"detail-risk " + getRisk(selectedNeo).tone}><span>{getRisk(selectedNeo).label}</span><small>{getRisk(selectedNeo).detail}</small></div>
-              <p class="detail-lede">A close approach object observed near your anchor date. Use the values below as the real-world record; the orbital display compresses them into a personal-scale scene.</p>
+              <p class="detail-lede">A close approach object observed near your anchor date. Use the values below as the real-world record; this close-up keeps the asteroid centred so you can study its shape and spin.</p>
               <div class="detail-stat-grid">
                 <div><span>DIAMETER</span><strong>{formatNumber(getDiameterKm(selectedNeo), 2)} <small>KM</small></strong></div>
                 <div><span>RELATIVE SPEED</span><strong>{formatNumber(getSpeedKps(selectedNeo), 2)} <small>KM/S</small></strong></div>

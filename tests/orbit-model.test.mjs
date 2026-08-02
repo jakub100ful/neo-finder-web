@@ -302,6 +302,26 @@ test("the live renderer parks fallback work and lowers GPU quality during intera
   assert.ok(rasterSource.includes("imageBuffer"));
 });
 
+test("the catalogue detail preview isolates a stationary, self-spinning asteroid", async () => {
+  const pageSource = await readFile(new URL("../src/routes/+page.svelte", import.meta.url), "utf8");
+  const previewSource = await readFile(new URL("../src/lib/AsteroidPreview.svelte", import.meta.url), "utf8");
+
+  assert.match(pageSource, /<AsteroidPreview\s+neo=\{selectedNeo\}/);
+  for (const marker of [
+    "position.set(0, 0, 0)",
+    "rotation.x +=",
+    "rotation.y +=",
+    "MeshStandardMaterial",
+    "flatShading: true",
+    'aria-label="Rotating asteroid preview"'
+  ]) {
+    assert.ok(previewSource.includes(marker), `missing asteroid preview marker: ${marker}`);
+  }
+
+  assert.ok(!previewSource.includes("getNeoOrbitPosition"));
+  assert.ok(!previewSource.includes("createOrbitLine"));
+});
+
 test("the catalogue exposes an anchor-date editor", async () => {
   const source = await readFile(new URL("../src/routes/+page.svelte", import.meta.url), "utf8");
 
