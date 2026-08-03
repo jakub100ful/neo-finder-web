@@ -1,11 +1,22 @@
 # Published NEO shape models
 
-`apophis_v233s7.obj` is the OBJ shape model from the NASA Planetary Data System
-bundle `urn:nasa:pds:gbo.ast-apophis.jpl.radar.shape_model::1.0`.
+These local OBJ files are validated browser assets for the PDS Catalogue. The
+Small Body Radar Shape Models products are published by the NASA PDS Small
+Bodies Node as PDS4 ASCII `.tab` files. The ingestion script validates their
+vertex/facet records and preserves the OBJ-compatible text as local `.obj`
+assets for the existing Three.js loader.
 
-Source: NASA PDS Small Bodies Node, radar shape model of asteroid (99942)
-Apophis. DOI: `10.26033/ydyq-5756`.
+Run `npm run ingest:radar-shapes` to refresh the official source files, or
+`npm run check:radar-shapes` to validate the checked-in assets. The manifest and
+PDS/JPL metadata live in `src/lib/radar-shape-models.js` and the cached catalogue
+is `static/data/pds-catalogue.json`.
 
-The model is a preliminary radar-derived shape reconstruction, not an optical
-photograph. The app normalizes its kilometre coordinates to the visual scale
-used by the orbital scene.
+Archive: https://sbn.psi.edu/pds/resource/rshape.html
+
+Bundle: `urn:nasa:pds:compil.ast.radar.shape-models::1.0`
+
+DOI: `10.26033/vtj1-tb13`
+
+The models are preliminary radar-derived shape reconstructions, not optical
+photographs. Their coordinates are in kilometres and the app normalizes each
+mesh to the visual scale used by the orbital scene.

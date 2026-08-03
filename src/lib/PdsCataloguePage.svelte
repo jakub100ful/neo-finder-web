@@ -125,7 +125,7 @@
       <div class="eyebrow">NASA PDS ARCHIVE // BUILD-TIME INDEX</div>
       <h1>Browse the archive.</h1>
       <p class="page-lede">
-        Find NEOs with an identified PDS shape-model record, including archive products that still need conversion.
+        Find asteroid shape models with an identified PDS archive record, including bundled radar products and records that still need conversion.
         <strong>RENDER READY</strong> is a separate local-geometry status.
       </p>
     </div>
@@ -207,10 +207,10 @@
           <div class="pds-identity">{identityLabel(record)}</div>
           <div class="pds-dataset-block">
             <strong>{record.pds?.bundleName || record.pds?.collectionName || record.pds?.productName || "UNNAMED PDS PRODUCT"}</strong>
-            <span>{record.pds?.productType || "ARCHIVE PRODUCT"}</span>
+            <span>{record.pds?.productType || "ARCHIVE PRODUCT"}{record.pds?.variant ? ` // ${record.pds.variant}` : ""}</span>
           </div>
           <div class="pds-metadata-grid">
-            <div><span>FORMAT</span><strong>{record.pds?.format || "UNKNOWN"}</strong></div>
+            <div><span>FORMAT</span><strong>{record.pds?.sourceFormat ? `${record.pds.sourceFormat.toUpperCase()} → ${(record.pds.format || "UNKNOWN").toUpperCase()}` : (record.pds?.format || "UNKNOWN")}</strong></div>
             <div><span>UNITS</span><strong>{record.pds?.units || "UNKNOWN"}</strong></div>
             <div><span>VERTICES</span><strong>{formatCount(record.pds?.vertexCount)}</strong></div>
             <div><span>FACETS</span><strong>{formatCount(record.pds?.facetCount)}</strong></div>

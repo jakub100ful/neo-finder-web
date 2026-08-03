@@ -411,3 +411,24 @@ For each candidate selected for rendering, validate the actual geometry file, co
 3. Should `LARGEST` show only known diameters, or include a separate H-magnitude/estimated-size section for objects without diameter data?
 
 Recommended defaults: build-time dataset first, 365-day approach window with a 10-year option, and known effective diameters only in the primary largest ranking.
+
+## Feature plan — bundle Small Body Radar Shape Models
+
+### Research conclusion
+
+The official [Small Body Radar Shape Models](https://sbn.psi.edu/pds/resource/rshape.html) archive publishes nine asteroid targets: 216 Kleopatra, 1620 Geographos, 2063 Bacchus, 4179 Toutatis, 4769 Castalia, 6489 Golevka, 1998 KY26, 52760 (1998 ML14), and 25143 Itokawa. Toutatis has separate low- and high-resolution products, so the bundle contains ten geometry products. The archive identifies the PDS4 bundle as `urn:nasa:pds:compil.ast.radar.shape-models::1.0`, migrated from the unchanged PDS3 dataset.
+
+Each PDS4 data product is a `.tab` ASCII file with a vertex table followed by a triangular facet table. The labels describe kilometre coordinates centred on the body's centre of mass and aligned to the principal axes, and the records use the same `v x y z` / 1-based triangular `f i j k` representation as Wavefront OBJ. The app therefore needs a deterministic build-time conversion/validation step, not a new browser mesh format; local assets can remain OBJ and the source PDS label/download must stay attached for provenance. Toutatis needs an explicit frame/convention note and separate resolution identity.
+
+JPL SBDB supplies the stable SPK ID, NEO/PHA classification, orbital elements, and available physical fields for the bundled objects. Eight of the nine targets are NEOs; Kleopatra is intentionally retained as a non-NEO archive record so archive discovery remains broader than the explicit `NEO ONLY` filter.
+
+Sources: [SBN archive page](https://sbn.psi.edu/pds/resource/rshape.html), [PDS4 bundle browse](https://sbnarchive.psi.edu/pds4/non_mission/compil.ast.radar.shape-models/), [PDS4 data directory](https://sbnarchive.psi.edu/pds4/non_mission/compil.ast.radar.shape-models/data/), [JPL SBDB API documentation](https://ssd-api.jpl.nasa.gov/doc/sbdb.html).
+
+### Implementation plan
+
+1. Add a checked-in radar-shape manifest containing official PDS product LIDVIDs, target aliases, source `.tab` URLs, local `.obj` URLs, DOI, units, vertex/facet counts, resolution, and a JPL SBDB orbital/physical snapshot.
+2. Add a maintenance ingestion script that downloads each official `.tab`, validates record ordering, indices, counts, and Wavefront-OBJ compatibility, then writes local assets atomically.
+3. Derive the render-ready mesh catalogue from the manifest, retaining per-product identity so Toutatis low/high records resolve to the selected local asset rather than collapsing by target alias.
+4. Extend the PDS catalogue normalizer to preserve bundled orbital/physical data and source-format metadata. Seed the build-time catalogue with the manifest so records remain visible when PDS Search is unavailable.
+5. Update the catalogue cards to show `PDS TAB → LOCAL OBJ`, preserve the archive/render-ready status split, and let every bundled object open the existing detail page and be added to the orbit.
+6. Add tests for all manifest records/assets, stable aliases, PDS/NEO filtering, conversion validation, and Toutatis resolution selection. Verify the catalogue and detail renderer in a browser with more than Apophis visible.

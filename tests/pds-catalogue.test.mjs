@@ -19,7 +19,7 @@ import {
   PDS_CATALOGUE_STATUSES,
   resetPdsCatalogueCache
 } from "../src/lib/pds-catalogue.js";
-import { getMeshRecord } from "../src/lib/pds-mesh.js";
+import { getMeshRecord, PDS_MESH_CATALOG } from "../src/lib/pds-mesh.js";
 
 const shapeSearchPayload = {
   results: [
@@ -103,7 +103,7 @@ test("a local PDS mesh upgrades a matching archive candidate to RENDER READY", (
         recordUrl: "https://pds.nasa.gov/test-record"
       }
     }
-  ]);
+  ], {}, { meshCatalog: PDS_MESH_CATALOG.filter((mesh) => mesh.id === "apophis-v1") });
 
   assert.equal(dataset.records.length, 1);
   const record = dataset.records[0];
@@ -156,24 +156,33 @@ test("the cached PDS dataset coalesces requests and preserves the verified mesh 
     fetchPdsCatalogue({ fetchImpl, allowCache: false })
   ]);
   assert.equal(calls, 1);
-  assert.equal(left.records[0].pds.status, PDS_CATALOGUE_STATUSES.renderReady);
-  assert.equal(right.records[0].neo.name, "(99942) Apophis");
+  assert.equal(left.records.length, 11);
+  assert.equal(left.records.every((record) => record.pds.status === PDS_CATALOGUE_STATUSES.renderReady), true);
+  assert.equal(right.records.find((record) => record.neo.name.includes("Apophis"))?.neo.isNeo, true);
   resetPdsCatalogueCache();
 });
 
-test("the checked-in PDS catalogue is timestamped and links the Apophis record and download", async () => {
+test("the checked-in PDS catalogue bundles the radar archive products with provenance and orbit data", async () => {
   const raw = await readFile(new URL("../static/data/pds-catalogue.json", import.meta.url), "utf8");
   const dataset = JSON.parse(raw);
   assert.equal(dataset.schemaVersion, 1);
   assert.ok(dataset.generatedAt);
   assert.ok(dataset.sourceUrls.some((url) => url.includes("pds.nasa.gov/api/search")));
-  assert.equal(dataset.records.length, 2);
-  assert.equal(dataset.records[0].pds.status, "render-ready");
-  assert.match(dataset.records[0].pds.recordUrl, /^https:\/\/pds\.nasa\.gov/);
-  assert.match(dataset.records[0].pds.downloadUrl, /^https:\/\//);
-  const candidate = dataset.records.find((record) => record.neo.name.includes("Geographos"));
-  assert.equal(candidate?.pds.status, "needs-conversion");
-  assert.match(candidate?.pds.recordUrl || "", /EAR-A-5-DDR-RADARSHAPE-MODELS/);
-  assert.equal(createPdsCatalogueFromMesh().records[0].neo.name, "(99942) Apophis");
+  assert.equal(dataset.records.length, 11);
+  assert.equal(dataset.records.filter((record) => record.pds.status === "render-ready").length, 11);
+  const apophis = dataset.records.find((record) => record.neo.name.includes("Apophis"));
+  assert.match(apophis?.pds.recordUrl || "", /^https:\/\/pds\.nasa\.gov/);
+  assert.match(apophis?.pds.downloadUrl || "", /^https:\/\//);
+  assert.equal(apophis?.neo.isNeo, true);
+  const geographos = dataset.records.find((record) => record.neo.name.includes("Geographos"));
+  assert.equal(geographos?.pds.status, "render-ready");
+  assert.equal(geographos?.pds.sourceFormat, "tab");
+  assert.equal(geographos?.pds.format, "obj");
+  assert.match(geographos?.pds.recordUrl || "", /1620geographos\.xml/);
+  assert.match(geographos?.pds.downloadUrl || "", /1620geographos\.tab/);
+  assert.equal(geographos?.neo.isNeo, true);
+  assert.equal(dataset.records.find((record) => record.neo.name.includes("Kleopatra"))?.neo.isNeo, false);
+  assert.equal(dataset.records.filter((record) => record.neo.name.includes("Toutatis")).length, 2);
+  assert.equal(createPdsCatalogueFromMesh().records.find((record) => record.neo.name.includes("Apophis"))?.neo.name, "(99942) Apophis");
   assert.deepEqual(getPdsSearchProducts(shapeSearchPayload), shapeSearchPayload.results);
 });

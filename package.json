@@ -9,6 +9,8 @@
     "preview": "vite preview",
     "refresh:discover": "node scripts/refresh-discover-data.mjs",
     "refresh:pds-catalogue": "node scripts/refresh-pds-catalogue.mjs",
+    "ingest:radar-shapes": "node scripts/ingest-small-body-radar-shapes.mjs",
+    "check:radar-shapes": "node scripts/ingest-small-body-radar-shapes.mjs --check",
     "test": "node --test tests/*.test.mjs",
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json"
   },

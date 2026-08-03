@@ -42,7 +42,7 @@ export const PDS_CATALOGUE_STATUS_ORDER = [
 
 export const PDS_CATALOGUE_QUERY_SCOPE = Object.freeze({
   keywords: ["asteroid shape model", "radar shape model", "small body shape model"],
-  exactTargets: PDS_MESH_CATALOG.map((record) => record.objectName),
+  exactTargets: [...new Set(PDS_MESH_CATALOG.map((record) => record.objectName))],
   hierarchy: ["members", "member-of", "member-of/member-of"],
   pagination: "search-after"
 });
@@ -181,7 +181,14 @@ function isShapeRelated(pds = {}) {
 }
 
 function normalizeNeoSummary(source = {}, pds = {}) {
-  const id = clean(firstDefined(source.id, source.neoWsId, source.neo_reference_id));
+  const id = clean(firstDefined(
+    source.neoWsId,
+    source.neo_reference_id,
+    source.jplSpkId,
+    source.spkid,
+    source.spkId,
+    source.id
+  ));
   const spkid = clean(firstDefined(source.jplSpkId, source.spkid, source.spkId));
   const pdes = clean(firstDefined(source.pdes, source.designation));
   const targetName = clean(firstDefined(
@@ -195,11 +202,16 @@ function normalizeNeoSummary(source = {}, pds = {}) {
     spkid,
     pdes
   ));
-  const isPha = firstDefined(source.isPha, source.is_potentially_hazardous_asteroid);
+  const isPha = firstDefined(source.isPha, source.is_pha, source.is_potentially_hazardous_asteroid, source.pha);
   const isNeo = firstDefined(source.isNeo, source.is_neo, source.neo);
+  const orbitalData = source.orbital_data || source.orbitalData || null;
+  const physical = { ...(source.physical || {}) };
+  if (physical.H === undefined) physical.H = firstDefined(source.absolute_magnitude_h, source.absoluteMagnitude, source.H);
+  if (physical.diameterKm === undefined) physical.diameterKm = firstDefined(source.diameterKm, source.diameter);
 
   return {
     id,
+    neoWsId: clean(source.neoWsId),
     neo_reference_id: clean(firstDefined(source.neo_reference_id, id, spkid, pdes)),
     jplSpkId: spkid,
     spkid,
@@ -209,7 +221,17 @@ function normalizeNeoSummary(source = {}, pds = {}) {
     aliases: [...new Set([...(Array.isArray(source.aliases) ? source.aliases : []), id, spkid, pdes, targetName].filter(Boolean))],
     is_potentially_hazardous_asteroid: isPha === true || isPha === "Y" ? true : isPha === false || isPha === "N" ? false : null,
     isNeo: isNeo === false || isNeo === "N" ? false : isNeo === true || isNeo === "Y" ? true : null,
-    physical: source.physical || {}
+    absolute_magnitude_h: physical.H ?? undefined,
+    orbital_data: orbitalData || {},
+    nasa_jpl_url: clean(firstDefined(
+      source.nasa_jpl_url,
+      source.nasaJplUrl,
+      spkid || pdes || targetName
+        ? `https://ssd.jpl.nasa.gov/tools/sbdb_lookup.html#/?sstr=${encodeURIComponent(spkid || pdes || targetName)}`
+        : ""
+    )),
+    physical,
+    orbitClass: clean(firstDefined(source.orbitClass, physical.orbitClass))
   };
 }
 
@@ -233,15 +255,21 @@ function normalizePdsDetails(raw = {}) {
     collectionName: clean(firstDefined(raw.collectionName, raw.collection_name)),
     productName: clean(firstDefined(raw.productName, raw.product_name, raw.title)),
     productType: clean(firstDefined(raw.productType, raw.product_type, raw.modelType, raw.type)),
+    variant: clean(firstDefined(raw.variant, raw.modelVariant, raw.model_variant)),
+    frameConvention: clean(firstDefined(raw.frameConvention, raw.frame_convention)),
     targetName: clean(firstDefined(raw.targetName, raw.target_name, raw.objectName, raw.object_name)),
     format,
+    sourceFormat: clean(firstDefined(raw.sourceFormat, raw.source_format, raw.archiveFormat, raw.archive_format)),
     units: clean(firstDefined(raw.units, raw.unit)),
     geometryFile,
+    archiveFilename: getFileName(firstDefined(raw.archiveFilename, raw.archive_filename, raw.sourceFilename, raw.source_filename)),
     vertexCount: numberOrNull(firstDefined(raw.vertexCount, raw.vertices, raw.vertex_count)),
     facetCount: numberOrNull(firstDefined(raw.facetCount, raw.facets, raw.facet_count)),
     recordUrl: clean(firstDefined(raw.recordUrl, raw.record_url, raw.pdsRecordUrl, raw.sourceUrl)) || buildPdsRecordUrl(lidvid || lid),
     downloadUrl: clean(firstDefined(raw.downloadUrl, raw.download_url, raw.sourceDownloadUrl)),
+    pdsBundleUrl: clean(firstDefined(raw.pdsBundleUrl, raw.pds_bundle_url, raw.bundleUrl)),
     assetUrl,
+    meshRecordId: clean(firstDefined(raw.meshRecordId, raw.mesh_record_id)),
     doi: clean(raw.doi),
     source: clean(firstDefined(raw.source, raw.provenance)),
     provenance: clean(firstDefined(raw.provenance, raw.source)),
@@ -261,19 +289,25 @@ function meshToPdsDetails(mesh) {
     status: PDS_CATALOGUE_STATUSES.renderReady,
     lid: clean(mesh.pdsBundle).split("::")[0],
     lidvid: clean(mesh.pdsBundle),
-    bundleName: mesh.objectName,
-    collectionName: "Small Bodies Node // Shape Models",
-    productName: mesh.modelType,
+    bundleName: clean(mesh.bundleName || mesh.objectName),
+    collectionName: clean(mesh.collectionName || "Small Bodies Node // Shape Models"),
+    productName: clean(mesh.productName || mesh.modelType),
     productType: mesh.modelType,
+    variant: clean(mesh.variant),
+    frameConvention: clean(mesh.frameConvention),
     targetName: mesh.objectName,
     format: normalizeFormat(mesh.format || geometryFile),
+    sourceFormat: clean(mesh.sourceFormat || mesh.archiveFormat),
     units: clean(mesh.units),
     geometryFile,
-    vertexCount: null,
-    facetCount: null,
+    archiveFilename: getFileName(mesh.archiveFilename),
+    vertexCount: numberOrNull(mesh.vertexCount),
+    facetCount: numberOrNull(mesh.facetCount),
     recordUrl: mesh.pdsRecordUrl,
     downloadUrl: mesh.downloadUrl,
+    pdsBundleUrl: mesh.pdsBundleUrl,
     assetUrl: mesh.assetUrl,
+    meshRecordId: mesh.id,
     doi: mesh.doi,
     source: mesh.source,
     provenance: "Validated local renderer asset",
@@ -297,7 +331,11 @@ function mergeNeo(left = {}, right = {}) {
     full_name: firstDefined(right.full_name, left.full_name),
     isPha: firstDefined(right.isPha, right.is_potentially_hazardous_asteroid, left.isPha, left.is_potentially_hazardous_asteroid),
     isNeo: firstDefined(right.isNeo, right.neo, left.isNeo, left.neo),
-    physical: { ...(left.physical || {}), ...(right.physical || {}) }
+    orbital_data: { ...(left.orbital_data || {}), ...(left.orbitalData || {}), ...(right.orbital_data || {}), ...(right.orbitalData || {}) },
+    physical: { ...(left.physical || {}), ...(right.physical || {}) },
+    orbitClass: firstDefined(right.orbitClass, left.orbitClass),
+    nasa_jpl_url: firstDefined(right.nasa_jpl_url, left.nasa_jpl_url),
+    absolute_magnitude_h: firstDefined(right.absolute_magnitude_h, left.absolute_magnitude_h)
   });
 }
 
@@ -307,18 +345,28 @@ function findMatchingNeo(record, neoRecords = []) {
 }
 
 function findMatchingMesh(record, meshCatalog = PDS_MESH_CATALOG) {
+  const pds = record.pds || record;
+  const preferredId = clean(firstDefined(pds.meshRecordId, record.meshRecordId));
+  if (preferredId) {
+    const preferred = meshCatalog.find((mesh) => mesh.id === preferredId);
+    if (preferred) return preferred;
+  }
+
+  const productIdentity = clean(firstDefined(pds.lidvid, pds.lid, record.pdsBundle));
+  if (productIdentity) {
+    const exact = meshCatalog.find((mesh) =>
+      mesh.pdsBundle === productIdentity || mesh.pdsBundle?.split("::")[0] === productIdentity
+    );
+    if (exact) return exact;
+  }
+
   const aliases = getRecordAliases(record);
   return meshCatalog.find((mesh) => aliasesOverlap(aliases, getRecordAliases({ ...mesh, aliases: [mesh.objectName, ...(mesh.aliases || [])] }))) || null;
 }
 
 function applyMeshRecord(record, mesh) {
   const meshPds = meshToPdsDetails(mesh);
-  const neo = mergeNeo(record.neo, normalizeNeoSummary({
-    id: mesh.neoWsId,
-    jplSpkId: mesh.spkId,
-    name: mesh.objectName,
-    aliases: [mesh.objectName, ...(mesh.aliases || [])]
-  }, meshPds));
+  const neo = mergeNeo(record.neo, normalizeNeoSummary(mesh, meshPds));
   return {
     ...record,
     canonicalId: record.canonicalId || getDiscoverCanonicalKey(neo),
@@ -380,10 +428,14 @@ export function createPdsCatalogue(records = [], metadata = {}, { neoRecords = [
   }
 
   for (const mesh of meshCatalog) {
-    const candidate = [...byProduct.values()].find((record) => aliasesOverlap(
-      getRecordAliases(record),
-      getRecordAliases({ ...mesh, aliases: [mesh.objectName, ...(mesh.aliases || [])] })
-    ));
+    const candidate = [...byProduct.values()].find((record) => {
+      if (record.pds?.status === PDS_CATALOGUE_STATUSES.renderReady) return false;
+      const productMatch = record.pds?.lidvid === mesh.pdsBundle || record.pds?.meshRecordId === mesh.id;
+      return productMatch || aliasesOverlap(
+        getRecordAliases(record),
+        getRecordAliases({ ...mesh, aliases: [mesh.objectName, ...(mesh.aliases || [])] })
+      );
+    });
     if (candidate) {
       const patched = applyMeshRecord(candidate, mesh);
       byProduct.set(productKey(candidate), patched);
@@ -552,7 +604,13 @@ export function getPdsRecordSearchUrl(record = {}) {
 }
 
 export function getPdsCatalogueNeo(record = {}) {
-  if (record.neo?.id || record.neo?.jplSpkId || record.neo?.pdes) return record.neo;
+  if (record.neo?.id || record.neo?.jplSpkId || record.neo?.pdes) {
+    return {
+      ...record.neo,
+      meshRecordId: record.pds?.meshRecordId || record.neo?.meshRecordId || "",
+      meshAssetUrl: record.pds?.assetUrl || record.neo?.meshAssetUrl || ""
+    };
+  }
   return toNeoObject(record);
 }
 

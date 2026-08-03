@@ -3,6 +3,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { PDS_MESH_CATALOG, PDS_SEARCH_API_URL } from "../src/lib/pds-mesh.js";
+import { SMALL_BODY_RADAR_SHAPE_MODELS_BUNDLE } from "../src/lib/radar-shape-models.js";
 import {
   createPdsCatalogue,
   getPdsCatalogueStatusCounts,
@@ -14,17 +15,18 @@ import {
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const outputPath = resolve(root, "static/data/pds-catalogue.json");
 const SEARCH_LIMIT = 100;
-const MAX_SEARCH_PAGES = 5;
-const MAX_HIERARCHY_PRODUCTS = 100;
+const MAX_SEARCH_PAGES = 2;
+const MAX_HIERARCHY_PRODUCTS = 12;
 const RADAR_ARCHIVE_URL = "https://pds.nasa.gov/ds-view/pds/viewProfile.jsp?dsid=EAR-A-5-DDR-RADARSHAPE-MODELS-V2.0";
+const seedOnly = process.argv.includes("--seed-only");
 
 const queryConfigs = [
   { label: "asteroid-shape-model", keywords: "asteroid shape model" },
   { label: "radar-shape-model", keywords: "radar shape model" },
   { label: "small-body-shape-model", keywords: "small body shape model" },
   ...PDS_MESH_CATALOG.map((mesh) => ({
-    label: `exact-target-${mesh.spkId || mesh.objectName}`,
-    q: `target_name eq "${mesh.objectName.replace(/^\(\d+\)\s*/, "")}"`
+    label: `target-keyword-${mesh.spkId || mesh.objectName}`,
+    keywords: mesh.objectName
   }))
 ];
 
@@ -122,8 +124,10 @@ async function crawlHierarchy(lidvid, fetchImpl) {
 
 async function collectRecords(fetchImpl) {
   const records = [];
-  const sourceUrls = [PDS_SEARCH_API_URL, RADAR_ARCHIVE_URL];
+  const sourceUrls = [PDS_SEARCH_API_URL, RADAR_ARCHIVE_URL, SMALL_BODY_RADAR_SHAPE_MODELS_BUNDLE.archiveUrl, SMALL_BODY_RADAR_SHAPE_MODELS_BUNDLE.bundleUrl];
   let successfulQueries = 0;
+
+  if (seedOnly) return { records, sourceUrls };
 
   for (const query of queryConfigs) {
     try {
@@ -163,14 +167,16 @@ async function writeCatalogue(dataset) {
 async function main() {
   const { records, sourceUrls } = await collectRecords();
   const dataset = createPdsCatalogue(records, {
-    source: "NASA PDS Search API // cached build-time catalogue",
+    source: "NASA PDS Search API + bundled Small Body Radar manifest // cached build-time catalogue",
     generatedAt: new Date().toISOString(),
-    queryScope: {
-      ...PDS_CATALOGUE_QUERY_SCOPE,
-      exactTargets: PDS_MESH_CATALOG.map((mesh) => mesh.objectName),
+      queryScope: {
+        ...PDS_CATALOGUE_QUERY_SCOPE,
+      exactTargets: [...new Set(PDS_MESH_CATALOG.map((mesh) => mesh.objectName))],
       queryCount: queryConfigs.length,
       maxSearchPages: MAX_SEARCH_PAGES,
-      hierarchyCrawl: true
+      hierarchyCrawl: !seedOnly,
+      buildMode: seedOnly ? "seed-only" : "search-plus-seed",
+      seedBundle: SMALL_BODY_RADAR_SHAPE_MODELS_BUNDLE.lidvid
     },
     sourceUrls
   });
