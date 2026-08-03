@@ -9,13 +9,20 @@ function makeDemoNeo({
   semiMajorAxis,
   hazardous,
   approach,
-  physical = {}
+  physical = {},
+  orbitalData = null,
+  absoluteMagnitude = null,
+  sentryObject = false,
+  jplSpkId = id
 }) {
   return {
     id,
+    neo_reference_id: id,
     name,
-    nasa_jpl_url: "https://ssd.jpl.nasa.gov/tools/sbdb_lookup.html#/?sstr=" + id,
+    nasa_jpl_url: "https://ssd.jpl.nasa.gov/tools/sbdb_lookup.html#/?sstr=" + jplSpkId,
     is_potentially_hazardous_asteroid: hazardous,
+    ...(absoluteMagnitude !== null ? { absolute_magnitude_h: absoluteMagnitude } : {}),
+    is_sentry_object: sentryObject,
     estimated_diameter: {
       kilometers: {
         estimated_diameter_min: diameter * 0.82,
@@ -44,7 +51,7 @@ function makeDemoNeo({
         orbiting_body: "Earth"
       }
     ],
-    orbital_data: {
+    orbital_data: orbitalData || {
       orbit_id: id.slice(-3),
       orbit_determination_date: approach,
       inclination: String(inclination),
@@ -84,16 +91,28 @@ export const demoNeos = [
     }
   }),
   makeDemoNeo({
-    id: "demo-999",
-    name: "99942 APOPHIS // DEMO",
-    diameter: 0.37,
-    speed: 7.42,
-    distance: 15600000,
-    inclination: 3.3,
-    eccentricity: 0.1912,
+    id: "2099942",
+    name: "99942 APOPHIS",
+    diameter: 0.34,
+    speed: 7.42254,
+    distance: 38011,
+    inclination: 3.34,
+    eccentricity: 0.191,
     semiMajorAxis: 0.922,
     hazardous: true,
-    approach: "2029-04-13"
+    approach: "2029-04-13",
+    absoluteMagnitude: 19.09,
+    sentryObject: false,
+    jplSpkId: "20099942",
+    physical: {
+      source: "NASA/JPL SBDB reference profile",
+      diameterKm: 0.34,
+      extent: "0.41 x 0.35 x 0.32",
+      extentKm: [0.41, 0.35, 0.32],
+      rotationPeriodHours: 30.56,
+      albedo: 0.3,
+      spectralClass: "SQ"
+    }
   }),
   makeDemoNeo({
     id: "demo-2062",

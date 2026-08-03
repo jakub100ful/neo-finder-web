@@ -7,6 +7,8 @@ import {
   MOON_ORBIT_RADIUS,
   MOON_RADIUS_SCENE,
   NEO_ORBIT_PHASE_RATE,
+  SUN_DISTANCE_SCENE,
+  SUN_RADIUS_SCENE,
   SIMULATED_DAYS_PER_SECOND,
   ZOOM_MAX_MULTIPLIER,
   ZOOM_MIN_MULTIPLIER,
@@ -17,6 +19,11 @@ import {
 } from "./orbit-model.mjs";
 import { getCameraOrbitPosition } from "./view-model.mjs";
 import { createAsteroidGeometry } from "./asteroid-geometry.mjs";
+import {
+  createMeshInstance,
+  disposeObject3D,
+  loadMeshTemplate
+} from "./neo-mesh.js";
 import {
   createEarthSurfaceMap,
   createMoonSurfaceMap,
@@ -61,24 +68,28 @@ import {
       emissive: 0x052841,
       grid: 0x72e7ff,
       orbit: 0x286078,
+      sun: 0xffcb72,
       moonOrbit: 0x6178aa
     },
     lava: {
       emissive: 0x40120b,
       grid: 0xffbe63,
       orbit: 0x744039,
+      sun: 0xff8b4a,
       moonOrbit: 0x946e8c
     },
     moon: {
       emissive: 0x29283c,
       grid: 0xe3e4ff,
       orbit: 0x514f74,
+      sun: 0xffd9a5,
       moonOrbit: 0x8a8bbd
     },
     plasma: {
       emissive: 0x2e0d52,
       grid: 0xff62d2,
       orbit: 0x673b7d,
+      sun: 0xff9fdb,
       moonOrbit: 0xb74d99
     }
   };
@@ -158,8 +169,6 @@ import {
 
       let palette = THEMES[earthTheme] || THEMES.aqua;
       const scene = new THREE.Scene();
-      // The Sun is intentionally out of this product view for now. Keep the
-      // frustum tight enough for the Earth, Moon and NEO presentation rig.
       const cameraDirection = new THREE.Vector3(0, 8, 74).normalize();
       const defaultCameraDistance = Math.sqrt(8 * 8 + 74 * 74);
       const maxCameraDistance = defaultCameraDistance * ZOOM_MAX_MULTIPLIER;
@@ -170,7 +179,13 @@ import {
       const interactionPixelRatio = Math.min(devicePixelRatio, 1);
       let cameraDistance = defaultCameraDistance;
       const cameraFar = maxCameraDistance + MOON_ORBIT_RADIUS + EARTH_RADIUS_SCENE * 4;
-      const camera = new THREE.PerspectiveCamera(33, 1, 0.1, cameraFar);
+      const solarSceneFar = SUN_DISTANCE_SCENE + SUN_RADIUS_SCENE * 2;
+      const camera = new THREE.PerspectiveCamera(
+        33,
+        1,
+        0.1,
+        Math.max(cameraFar, solarSceneFar)
+      );
       const renderer = new THREE.WebGLRenderer({
         canvas,
         // Keep the space backdrop compositable with the CSS safety layer.
@@ -182,6 +197,8 @@ import {
       });
       renderer.debug.checkShaderErrors = import.meta.env.DEV;
       renderer.setClearColor(0x050612, 0);
+      renderer.shadowMap.enabled = true;
+      renderer.shadowMap.type = THREE.PCFShadowMap;
       renderStatus = "WEBGL READY";
       renderer.setPixelRatio(idlePixelRatio);
       renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -257,13 +274,27 @@ import {
 
       const earthFrame = new THREE.Group();
       scene.add(earthFrame);
-      const ambient = new THREE.AmbientLight(0x7ca6ff, 0.42);
-      const hemisphere = new THREE.HemisphereLight(0x8abaff, 0x02030b, 0.48);
-      const keyLight = new THREE.PointLight(0xffffff, 3.2, 160);
+      const ambient = new THREE.AmbientLight(0x7ca6ff, 0.08);
+      const hemisphere = new THREE.HemisphereLight(0x8abaff, 0x02030b, 0.12);
+      const keyLight = new THREE.PointLight(0xffffff, 0.55, 160);
       keyLight.position.set(-34, 24, 42);
-      const rimLight = new THREE.DirectionalLight(0x6a8bff, 0.65);
+      const rimLight = new THREE.DirectionalLight(0x6a8bff, 0.16);
       rimLight.position.set(30, -18, -42);
-      scene.add(ambient, hemisphere, rimLight);
+      const sunLight = new THREE.DirectionalLight(palette.sun, 3.4);
+      sunLight.position.set(SUN_DISTANCE_SCENE, 0, 0);
+      sunLight.target.position.set(0, 0, 0);
+      sunLight.castShadow = true;
+      sunLight.shadow.mapSize.set(2048, 2048);
+      sunLight.shadow.camera.left = -820;
+      sunLight.shadow.camera.right = 820;
+      sunLight.shadow.camera.top = 820;
+      sunLight.shadow.camera.bottom = -820;
+      sunLight.shadow.camera.near = Math.max(0.1, SUN_DISTANCE_SCENE - 1024);
+      sunLight.shadow.camera.far = SUN_DISTANCE_SCENE + 1024;
+      sunLight.shadow.bias = -0.00035;
+      sunLight.shadow.normalBias = 0.08;
+      sunLight.shadow.camera.updateProjectionMatrix();
+      scene.add(ambient, hemisphere, rimLight, sunLight, sunLight.target);
       earthFrame.add(keyLight);
 
       const starPositions = [];
@@ -310,7 +341,7 @@ import {
       const earthMaterial = new THREE.MeshStandardMaterial({
         color: 0xffffff,
         emissive: palette.emissive,
-        emissiveIntensity: 0.14,
+        emissiveIntensity: 0.04,
         roughness: 0.84,
         metalness: 0.02
       });
@@ -325,6 +356,8 @@ import {
         new THREE.SphereGeometry(EARTH_RADIUS_SCENE, 48, 32),
         earthMaterial
       );
+      earth.castShadow = true;
+      earth.receiveShadow = true;
       earthGroup.add(earth);
 
       const gridMaterial = new THREE.LineBasicMaterial({
@@ -353,6 +386,48 @@ import {
       earthGroup.add(atmosphere);
       earthFrame.add(earthGroup);
 
+      let sunFlareTexture = createSunFlareTexture(THREE);
+      const sunMaterial = new THREE.MeshBasicMaterial({
+        color: palette.sun,
+        transparent: true,
+        opacity: 1,
+        toneMapped: false
+      });
+      const sun = new THREE.Mesh(
+        new THREE.SphereGeometry(SUN_RADIUS_SCENE, 24, 16),
+        sunMaterial
+      );
+      sun.position.set(SUN_DISTANCE_SCENE, 0, 0);
+      const sunGlow = new THREE.Mesh(
+        new THREE.SphereGeometry(SUN_RADIUS_SCENE * 1.15, 24, 16),
+        new THREE.MeshBasicMaterial({
+          color: palette.sun,
+          transparent: true,
+          opacity: 0.2,
+          blending: THREE.AdditiveBlending,
+          side: THREE.BackSide,
+          depthWrite: false,
+          toneMapped: false
+        })
+      );
+      sunGlow.position.copy(sun.position);
+      const sunFlareMaterial = new THREE.SpriteMaterial({
+        map: sunFlareTexture,
+        color: palette.sun,
+        transparent: true,
+        opacity: 0.86,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+        depthTest: true,
+        toneMapped: false
+      });
+      const sunFlare = new THREE.Sprite(sunFlareMaterial);
+      sunFlare.position.copy(sun.position);
+      sunFlare.scale.setScalar(SUN_RADIUS_SCENE * 6.5);
+      const solarBody = new THREE.Group();
+      solarBody.add(sunFlare, sunGlow, sun);
+      scene.add(solarBody);
+
       const moonPivot = new THREE.Group();
       let moonTexture = createMoonTexture(THREE);
       const moonMaterial = new THREE.MeshStandardMaterial({
@@ -364,6 +439,8 @@ import {
         new THREE.SphereGeometry(MOON_RADIUS_SCENE, 24, 16),
         moonMaterial
       );
+      moon.castShadow = true;
+      moon.receiveShadow = true;
       moon.position.set(MOON_ORBIT_RADIUS, 0, 0);
       moonPivot.add(moon);
       earthFrame.add(moonPivot);
@@ -373,6 +450,17 @@ import {
       const moonOrbitGroup = new THREE.Group();
       earthFrame.add(orbitGroup, asteroidGroup, moonOrbitGroup);
       const asteroidObjects = [];
+      let meshLoadGeneration = 0;
+      let objLoaderRequest = null;
+
+      function getObjLoader() {
+        if (!objLoaderRequest) {
+          objLoaderRequest = import("three/addons/loaders/OBJLoader.js").then(
+            ({ OBJLoader }) => OBJLoader
+          );
+        }
+        return objLoaderRequest;
+      }
 
       function createOrbitLine(
         radius,
@@ -447,23 +535,81 @@ import {
         return texture;
       }
 
+      function createSunFlareTexture(Engine) {
+        const flareCanvas = document.createElement("canvas");
+        flareCanvas.width = 256;
+        flareCanvas.height = 256;
+        const context = flareCanvas.getContext("2d");
+        if (!context) throw new Error("2D canvas context unavailable for Sun glare");
+        const center = 128;
+        const gradient = context.createRadialGradient(
+          center,
+          center,
+          0,
+          center,
+          center,
+          center
+        );
+        gradient.addColorStop(0, "rgba(255, 255, 255, 1)");
+        gradient.addColorStop(0.08, "rgba(255, 248, 203, 0.98)");
+        gradient.addColorStop(0.24, "rgba(255, 190, 82, 0.54)");
+        gradient.addColorStop(0.56, "rgba(255, 112, 45, 0.16)");
+        gradient.addColorStop(1, "rgba(255, 90, 30, 0)");
+        context.fillStyle = gradient;
+        context.fillRect(0, 0, flareCanvas.width, flareCanvas.height);
+
+        const texture = new Engine.CanvasTexture(flareCanvas);
+        texture.colorSpace = Engine.SRGBColorSpace;
+        texture.needsUpdate = true;
+        return texture;
+      }
+
       function disposeGroup(group) {
         while (group.children.length) {
-          const child = group.children.pop();
-          child.traverse((object) => {
-            if (object.geometry) object.geometry.dispose();
-            if (object.material) {
-              if (Array.isArray(object.material)) {
-                object.material.forEach((material) => material.dispose());
-              } else {
-                object.material.dispose();
-              }
-            }
-          });
+          const child = group.children[group.children.length - 1];
+          group.remove(child);
+          disposeObject3D(child);
+        }
+      }
+
+      async function hydratePublishedMesh(object, metrics, buildVersion) {
+        if (!metrics.mesh) return;
+
+        try {
+          const Loader = await getObjLoader();
+          const template = await loadMeshTemplate(Loader, metrics.mesh);
+          if (
+            !template ||
+            buildVersion !== meshLoadGeneration ||
+            object.parent !== asteroidGroup
+          ) {
+            return;
+          }
+
+          const publishedBody = createMeshInstance(
+            THREE,
+            template,
+            metrics.appearance,
+            metrics.size
+          );
+          const previousBody = object.userData.body;
+          if (previousBody) {
+            object.remove(previousBody);
+            disposeObject3D(previousBody);
+          }
+          object.add(publishedBody);
+          object.userData.body = publishedBody;
+          object.userData.meshState = "PDS_MESH";
+        } catch (error) {
+          if (buildVersion === meshLoadGeneration && object.parent === asteroidGroup) {
+            object.userData.meshState = "PROCEDURAL";
+          }
+          console.warn("NEO Finder PDS mesh unavailable", error);
         }
       }
 
       function updateNeos(nextNeos) {
+        const buildVersion = ++meshLoadGeneration;
         disposeGroup(orbitGroup);
         disposeGroup(asteroidGroup);
         asteroidObjects.length = 0;
@@ -472,6 +618,7 @@ import {
         nextNeos.slice(0, 8).forEach((neo, index) => {
           const metrics = getSceneMetrics(neo, index);
           const appearance = metrics.appearance;
+          const meshRecord = metrics.mesh;
           const asteroidMaterial = new THREE.MeshStandardMaterial({
             color: appearance.materialColor,
             roughness: appearance.roughness,
@@ -483,6 +630,8 @@ import {
             createAsteroidGeometry(THREE, metrics.size, appearance),
             asteroidMaterial
           );
+          asteroid.castShadow = true;
+          asteroid.receiveShadow = true;
           const halo = new THREE.Mesh(
             new THREE.IcosahedronGeometry(metrics.size * 1.5, 1),
             new THREE.MeshBasicMaterial({
@@ -515,7 +664,10 @@ import {
             bodyRadius: metrics.bodyRadius,
             minimumPeriapsisRadius: metrics.minimumPeriapsisRadius,
             spin: appearance.spin,
-            spinAxis: new THREE.Vector3(...appearance.spinAxis).normalize()
+            spinAxis: new THREE.Vector3(...appearance.spinAxis).normalize(),
+            body: asteroid,
+            meshRecord,
+            meshState: meshRecord ? "LOADING" : "PROCEDURAL"
           };
           asteroidGroup.add(object);
           orbitGroup.add(
@@ -530,6 +682,7 @@ import {
             )
           );
           asteroidObjects.push(object);
+          void hydratePublishedMesh(object, metrics, buildVersion);
         });
       }
 
@@ -615,6 +768,10 @@ import {
         palette = THEMES[next.theme] || THEMES.aqua;
         gridMaterial.color.setHex(palette.grid);
         earthMaterial.emissive.setHex(palette.emissive);
+        sunMaterial.color.setHex(palette.sun);
+        sunGlow.material.color.setHex(palette.sun);
+        sunFlareMaterial.color.setHex(palette.sun);
+        sunLight.color.setHex(palette.sun);
         atmosphereMaterial.color.set(next.atmosphere || "#61e7ff");
         atmosphere.visible = Boolean(next.atmosphereEnabled);
         atmosphereMaterial.opacity = next.atmosphereEnabled ? 0.14 : 0;
@@ -806,6 +963,7 @@ import {
         });
         if (earthTexture) earthTexture.dispose();
         if (moonTexture) moonTexture.dispose();
+        if (sunFlareTexture) sunFlareTexture.dispose();
         renderer.dispose();
         sceneController = null;
         softwareController?.dispose();
@@ -876,8 +1034,8 @@ import {
     min-height: 340px;
     overflow: hidden;
     background:
-      radial-gradient(circle at 50% 48%, rgba(29, 54, 115, 0.32), transparent 44%),
-      #050612;
+      radial-gradient(circle at 50% 48%, rgba(18, 31, 72, 0.12), transparent 44%),
+      #010208;
   }
 
   .scene-shell::before {
@@ -942,8 +1100,8 @@ import {
     z-index: 2;
     pointer-events: none;
     background:
-      linear-gradient(90deg, rgba(4, 5, 18, 0.55), transparent 18%, transparent 82%, rgba(4, 5, 18, 0.55)),
-      linear-gradient(0deg, rgba(4, 5, 18, 0.5), transparent 18%, transparent 82%, rgba(4, 5, 18, 0.42));
+      linear-gradient(90deg, rgba(1, 2, 8, 0.72), transparent 18%, transparent 82%, rgba(1, 2, 8, 0.72)),
+      linear-gradient(0deg, rgba(1, 2, 8, 0.64), transparent 18%, transparent 82%, rgba(1, 2, 8, 0.58));
   }
 
   .neo-hover-label {

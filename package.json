@@ -7,6 +7,8 @@
     "dev": "vite dev",
     "build": "vite build",
     "preview": "vite preview",
+    "refresh:discover": "node scripts/refresh-discover-data.mjs",
+    "refresh:pds-catalogue": "node scripts/refresh-pds-catalogue.mjs",
     "test": "node --test tests/*.test.mjs",
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json"
   },

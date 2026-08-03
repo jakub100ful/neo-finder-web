@@ -3,11 +3,16 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 import {
+  EARTH_RADIUS_KM,
   EARTH_RADIUS_SCENE,
   MOON_ORBIT_RADIUS,
   MOON_RADIUS_SCENE,
   NEO_ORBIT_CLEARANCE_SCENE,
   NEO_ORBIT_PHASE_RATE,
+  SUN_DISTANCE_KM,
+  SUN_DISTANCE_SCENE,
+  SUN_RADIUS_KM,
+  SUN_RADIUS_SCENE,
   ZOOM_MAX_MULTIPLIER,
   ZOOM_MIN_MULTIPLIER,
   clampCameraDistance,
@@ -48,6 +53,18 @@ test("the Earth and Moon use the same relative scale", () => {
   nearlyEqual(moonAtStart.x, MOON_ORBIT_RADIUS);
   assert.ok(MOON_ORBIT_RADIUS > EARTH_RADIUS_SCENE);
   assert.ok(MOON_RADIUS_SCENE < EARTH_RADIUS_SCENE);
+});
+
+test("the Sun preserves real-world distance and radius ratios in scene units", () => {
+  nearlyEqual(
+    SUN_DISTANCE_SCENE / EARTH_RADIUS_SCENE,
+    SUN_DISTANCE_KM / EARTH_RADIUS_KM
+  );
+  nearlyEqual(
+    SUN_RADIUS_SCENE / EARTH_RADIUS_SCENE,
+    SUN_RADIUS_KM / EARTH_RADIUS_KM
+  );
+  assert.ok(SUN_DISTANCE_SCENE > MOON_ORBIT_RADIUS);
 });
 
 test("the orbital model moves the Moon instead of leaving it at origin", () => {
@@ -476,6 +493,12 @@ test("the Svelte scene uses WebGL plus a compositor-safe 3D renderer", async () 
     "controls.minDistance",
     "controls.maxDistance",
     "vertexColors: true",
+    "SUN_DISTANCE_SCENE",
+    "SUN_RADIUS_SCENE",
+    "renderer.shadowMap.enabled = true",
+    "sunLight.castShadow = true",
+    "earth.castShadow = true",
+    "earth.receiveShadow = true",
     "getCameraOrbitPosition",
     "createSoftwareScene",
     "createEarthSurfaceMap",

@@ -7,6 +7,8 @@ export const EARTH_RADIUS_SCENE = 12;
 export const EARTH_RADIUS_KM = 6371;
 export const MOON_RADIUS_KM = 1737.4;
 export const MOON_DISTANCE_KM = 384400;
+export const SUN_RADIUS_KM = 696340;
+export const SUN_DISTANCE_KM = 149597870.7;
 export const MOON_ORBIT_PERIOD_DAYS = 27.32166;
 export const SIMULATED_DAYS_PER_SECOND = 1;
 export const NEO_ORBIT_PHASE_RATE = 0.21;
@@ -14,6 +16,14 @@ export const NEO_ORBIT_CLEARANCE_SCENE = 1.25;
 
 export const MOON_RADIUS_SCENE = EARTH_RADIUS_SCENE * (MOON_RADIUS_KM / EARTH_RADIUS_KM);
 export const MOON_ORBIT_RADIUS = EARTH_RADIUS_SCENE * (MOON_DISTANCE_KM / EARTH_RADIUS_KM);
+// Keep the solar body in the same Earth-radius scene units as the Moon. The
+// resulting distance is still dramatically smaller than the real kilometre
+// value, while preserving the real Earth-to-Sun ratio for the scene.
+export const SUN_RADIUS_SCENE = EARTH_RADIUS_SCENE * (SUN_RADIUS_KM / EARTH_RADIUS_KM);
+export const SUN_DISTANCE_SCENE = EARTH_RADIUS_SCENE * (SUN_DISTANCE_KM / EARTH_RADIUS_KM);
+// The alias keeps the orbital vocabulary used by the original solar-scene
+// implementation available to callers that think in terms of an orbit.
+export const SUN_ORBIT_RADIUS = SUN_DISTANCE_SCENE;
 
 export const ZOOM_MIN_MULTIPLIER = 0.55;
 export const ZOOM_MAX_MULTIPLIER = 10;
